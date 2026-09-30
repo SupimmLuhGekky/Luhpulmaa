@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -18,10 +21,10 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force",
-    "jobs:daily": "tsx scripts/run-daily-jobs.ts"
+    "jobs:daily": "tsx --env-file-if-exists=.env --conditions=react-server scripts/run-daily-jobs.ts"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx --env-file-if-exists=.env --conditions=react-server prisma/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.130.0",
