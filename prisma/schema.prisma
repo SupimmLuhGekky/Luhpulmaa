@@ -1,0 +1,1256 @@
+// Harbour — personal finance platform
+//
+// Conventions
+// - Every primary key is a UUID.
+// - Every user-owned record carries `userId` and every query on it filters by `userId`.
+// - Money is stored as integer minor units (cents) in BigInt columns. Never floats.
+// - Transaction amounts are signed from the account holder's perspective:
+//   negative = money leaving the account, positive = money entering it.
+// - Liability account balances (credit cards, loans) are stored as the positive amount owed.
+// - Calendar dates (transaction date, due dates, deadlines) are @db.Date and handled in
+//   code as "YYYY-MM-DD" strings in the user's time zone.
+// - The aggregation layer (Account, Transaction, …) only mirrors information held at
+//   external institutions. The `Ledger*` models are reserved for a future regulated
+//   money-movement product and are never written to by the aggregation layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & security
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BudgetMode {
+  STANDARD
+  ZERO_BASED
+}
+
+model User {
+  id                        String     @id @default(uuid()) @db.Uuid
+  email                     String     @unique
+  passwordHash              String
+  firstName                 String
+  lastName                  String
+  emailVerifiedAt           DateTime?
+  country                   String     @default("CA") @db.VarChar(2)
+  province                  String?    @default("QC") @db.VarChar(8)
+  currency                  String     @default("CAD") @db.VarChar(3)
+  locale                    String     @default("en-CA") @db.VarChar(10)
+  timeZone                  String     @default("America/Toronto")
+  monthlyIncomeTargetCents  BigInt?
+  minCashBufferCents        BigInt     @default(50000)
+  budgetMode                BudgetMode @default(STANDARD)
+  weekStartsOn              Int        @default(0) // 0 = Sunday
+  /// Financial preferences (e.g. default budget alert thresholds). Validated by zod in lib/settings.
+  preferences               Json       @default("{}")
+  /// Ordered list of visible dashboard widgets. Validated by zod in lib/dashboard.
+  dashboardLayout           Json?
+  onboardingCompletedAt     DateTime?
+  onboardingStep            Int        @default(0)
+  isDemo                    Boolean    @default(false)
+  failedLoginCount          Int        @default(0)
+  lockedUntil               DateTime?
+  passwordChangedAt         DateTime?
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+
+  sessions                 Session[]
+  verificationTokens       VerificationToken[]
+  connections              ProviderConnection[]
+  accounts                 Account[]
+  balanceSnapshots         AccountBalanceSnapshot[]
+  transactions             Transaction[]
+  categories               Category[]
+  subcategories            Subcategory[]
+  merchants                Merchant[]
+  merchantRules            MerchantRule[]
+  tags                     Tag[]
+  budgets                  Budget[]
+  budgetItems              BudgetItem[]
+  goals                    Goal[]
+  goalContributions        GoalContribution[]
+  incomeSources            IncomeSource[]
+  allocationPlans          AllocationPlan[]
+  recurringTransactions    RecurringTransaction[]
+  subscriptions            Subscription[]
+  bills                    Bill[]
+  billPayments             BillPayment[]
+  automations              Automation[]
+  automationRuns           AutomationRun[]
+  notifications            Notification[]
+  notificationPreferences  NotificationPreference[]
+  netWorthSnapshots        NetWorthSnapshot[]
+  syncLogs                 SyncLog[]
+  importBatches            ImportBatch[]
+  auditLogs                AuditLog[]
+  exchangeRates            ExchangeRate[]
+  ledgerAccounts           LedgerAccount[]
+  ledgerJournalEntries     LedgerJournalEntry[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  /// SHA-256 of the session token. The raw token only ever lives in the user's cookie.
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model VerificationToken {
+  id        String                @id @default(uuid()) @db.Uuid
+  userId    String                @db.Uuid
+  type      VerificationTokenType
+  tokenHash String                @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String?  @db.Uuid
+  action       String
+  resourceType String
+  resourceId   String?
+  /// Never contains secrets, tokens or credentials (enforced by lib/audit redaction).
+  metadata     Json     @default("{}")
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Financial data aggregation (information ABOUT money held elsewhere)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ProviderType {
+  MOCK
+  PLAID
+  FLINKS
+  MANUAL
+  CSV
+}
+
+model Institution {
+  id                    String       @id @default(uuid()) @db.Uuid
+  provider              ProviderType
+  providerInstitutionId String
+  name                  String
+  country               String       @default("CA") @db.VarChar(2)
+  primaryColor          String?
+  logoUrl               String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  connections ProviderConnection[]
+  accounts    Account[]
+
+  @@unique([provider, providerInstitutionId])
+  @@map("institutions")
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  REQUIRES_REAUTH
+  ERROR
+  DISCONNECTED
+}
+
+/// One authorised link between a user and an institution through a data provider
+/// (a Plaid "Item", a Flinks "LoginId", …). Bank credentials are never stored:
+/// only the provider-issued access token, encrypted at rest.
+model ProviderConnection {
+  id                   String           @id @default(uuid()) @db.Uuid
+  userId               String           @db.Uuid
+  provider             ProviderType
+  institutionId        String?          @db.Uuid
+  providerItemId       String
+  /// AES-256-GCM ciphertext (lib/security/encryption). Never logged, never sent to the client.
+  encryptedAccessToken String?
+  /// Provider incremental-sync cursor (not secret).
+  syncCursor           String?
+  status               ConnectionStatus @default(ACTIVE)
+  lastSyncedAt         DateTime?
+  lastSyncError        String?
+  consentExpiresAt     DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  accounts    Account[]
+  syncLogs    SyncLog[]
+
+  @@unique([provider, providerItemId])
+  @@index([userId])
+  @@map("provider_connections")
+}
+
+enum AccountType {
+  CHEQUING
+  SAVINGS
+  CASH
+  CREDIT_CARD
+  LINE_OF_CREDIT
+  LOAN
+  MORTGAGE
+  INVESTMENT
+  OTHER_ASSET
+  OTHER_LIABILITY
+}
+
+enum AccountStatus {
+  ACTIVE
+  CLOSED
+  DISCONNECTED
+}
+
+model Account {
+  id                    String        @id @default(uuid()) @db.Uuid
+  userId                String        @db.Uuid
+  connectionId          String?       @db.Uuid
+  institutionId         String?       @db.Uuid
+  providerAccountId     String?
+  name                  String
+  officialName          String?
+  mask                  String?       @db.VarChar(8)
+  type                  AccountType
+  currency              String        @default("CAD") @db.VarChar(3)
+  /// Assets: amount held. Liabilities: amount owed (positive).
+  currentBalanceCents   BigInt        @default(0)
+  availableBalanceCents BigInt?
+  creditLimitCents      BigInt?
+  isManual              Boolean       @default(false)
+  isHidden              Boolean       @default(false)
+  includeInNetWorth     Boolean       @default(true)
+  status                AccountStatus @default(ACTIVE)
+  displayOrder          Int           @default(0)
+  lastSyncedAt          DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection       ProviderConnection?      @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  institution      Institution?             @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  transactions     Transaction[]
+  balanceSnapshots AccountBalanceSnapshot[]
+  subscriptions    Subscription[]
+  bills            Bill[]
+  incomeSources    IncomeSource[]
+  recurring        RecurringTransaction[]
+  goals            Goal[]
+  importBatches    ImportBatch[]
+  syncLogs         SyncLog[]
+
+  @@unique([connectionId, providerAccountId])
+  @@index([userId, isHidden])
+  @@map("accounts")
+}
+
+model AccountBalanceSnapshot {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  accountId    String   @db.Uuid
+  date         DateTime @db.Date
+  balanceCents BigInt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, date])
+  @@index([userId, date])
+  @@map("account_balance_snapshots")
+}
+
+enum SyncStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model SyncLog {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @db.Uuid
+  connectionId      String?      @db.Uuid
+  accountId         String?      @db.Uuid
+  provider          ProviderType
+  trigger           String       @default("manual") // manual | scheduled | connect | webhook
+  status            SyncStatus   @default(RUNNING)
+  startedAt         DateTime     @default(now())
+  finishedAt        DateTime?
+  addedCount        Int          @default(0)
+  modifiedCount     Int          @default(0)
+  removedCount      Int          @default(0)
+  duplicateCount    Int          @default(0)
+  /// Safe, user-presentable error code/message. Never contains tokens or raw provider payloads.
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection ProviderConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  account    Account?            @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startedAt])
+  @@map("sync_logs")
+}
+
+model ImportBatch {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  accountId      String   @db.Uuid
+  source         String   @default("csv")
+  fileName       String?
+  rowCount       Int      @default(0)
+  importedCount  Int      @default(0)
+  duplicateCount Int      @default(0)
+  errorCount     Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("import_batches")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transactions & categorisation
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum CategoryKind {
+  EXPENSE
+  INCOME
+  TRANSFER
+}
+
+model Category {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @db.Uuid
+  name      String
+  /// Stable key for built-in categories ("groceries", "transportation", …). Null for custom ones.
+  systemKey String?
+  kind      CategoryKind @default(EXPENSE)
+  icon      String       @default("circle")
+  color     String       @default("#64748b")
+  sortOrder Int          @default(0)
+  isHidden  Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subcategories  Subcategory[]
+  transactions   Transaction[]
+  budgetItems    BudgetItem[]
+  merchantRules  MerchantRule[]
+  merchants      Merchant[]
+  recurring      RecurringTransaction[]
+  subscriptions  Subscription[]
+  bills          Bill[]
+  allocationItems AllocationItem[]
+
+  @@unique([userId, name])
+  @@unique([userId, systemKey])
+  @@index([userId, sortOrder])
+  @@map("categories")
+}
+
+model Subcategory {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  categoryId String   @db.Uuid
+  name       String
+  icon       String?
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category      Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  transactions  Transaction[]
+  merchantRules MerchantRule[]
+
+  @@unique([categoryId, name])
+  @@index([userId])
+  @@map("subcategories")
+}
+
+model Merchant {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  name              String
+  /// Lower-cased, punctuation/number-stripped key used for matching (lib/transactions/normalize).
+  normalizedName    String
+  defaultCategoryId String?  @db.Uuid
+  website           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultCategory Category?              @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+  transactions    Transaction[]
+  rules           MerchantRule[]
+  recurring       RecurringTransaction[]
+  subscriptions   Subscription[]
+
+  @@unique([userId, normalizedName])
+  @@map("merchants")
+}
+
+enum MerchantRuleSource {
+  USER_CORRECTION
+  USER_DEFINED
+}
+
+/// Learned merchant → category preferences. A rule becomes active once the user has
+/// corrected the same merchant to the same category `LEARNING_THRESHOLD` times
+/// (see lib/transactions/categorization), or immediately when USER_DEFINED.
+model MerchantRule {
+  id                String             @id @default(uuid()) @db.Uuid
+  userId            String             @db.Uuid
+  merchantId        String?            @db.Uuid
+  pattern           String
+  categoryId        String             @db.Uuid
+  subcategoryId     String?            @db.Uuid
+  source            MerchantRuleSource @default(USER_CORRECTION)
+  correctionCount   Int                @default(1)
+  isActive          Boolean            @default(false)
+  lastAppliedAt     DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant    Merchant?    @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subcategory Subcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, pattern, categoryId])
+  @@index([userId, pattern, isActive])
+  @@map("merchant_rules")
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  REFUND
+  ADJUSTMENT
+}
+
+enum CategorizationSource {
+  PROVIDER
+  SYSTEM_RULE
+  MERCHANT_RULE
+  AUTOMATION
+  USER
+  AI
+  UNCATEGORIZED
+}
+
+model Transaction {
+  id                    String               @id @default(uuid()) @db.Uuid
+  userId                String               @db.Uuid
+  accountId             String               @db.Uuid
+  providerTransactionId String?
+  /// Provider id of the pending transaction this posted transaction replaces.
+  pendingTransactionId  String?
+  date                  DateTime             @db.Date
+  postedDate            DateTime?            @db.Date
+  merchantId            String?              @db.Uuid
+  merchantName          String?
+  description           String
+  amountCents           BigInt
+  currency              String               @default("CAD") @db.VarChar(3)
+  type                  TransactionType
+  categoryId            String?              @db.Uuid
+  subcategoryId         String?              @db.Uuid
+  categorizedBy         CategorizationSource @default(UNCATEGORIZED)
+  /// Id of the MerchantRule / Automation that set the category (for "why is this categorised?").
+  categorizedByRuleId   String?
+  categorizedByLabel    String?
+  notes                 String?
+  isPending             Boolean              @default(false)
+  isRecurring           Boolean              @default(false)
+  isTransfer            Boolean              @default(false)
+  isManual              Boolean              @default(false)
+  /// Excluded from budgets and analytics (e.g. reimbursed purchase).
+  isExcluded            Boolean              @default(false)
+  /// Deterministic fingerprint for duplicate detection when no provider id exists.
+  fingerprint           String
+  importBatchId         String?              @db.Uuid
+  recurringId           String?              @db.Uuid
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account     Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  merchant    Merchant?             @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  category    Category?             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  subcategory Subcategory?          @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  importBatch ImportBatch?          @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  recurring   RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  tags        TransactionTag[]
+  contributions GoalContribution[]
+  billPayments  BillPayment[]
+  automationRuns AutomationRun[]
+
+  @@unique([accountId, providerTransactionId])
+  @@index([userId, date(sort: Desc)])
+  @@index([userId, categoryId, date])
+  @@index([userId, merchantId])
+  @@index([accountId, date])
+  @@index([accountId, fingerprint])
+  @@map("transactions")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  name      String
+  color     String   @default("#6366f1")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions TransactionTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model TransactionTag {
+  transactionId String   @db.Uuid
+  tagId         String   @db.Uuid
+  createdAt     DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+  @@index([tagId])
+  @@map("transaction_tags")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Budgeting
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BudgetPeriod {
+  MONTHLY
+  WEEKLY
+  CUSTOM
+}
+
+model Budget {
+  id                 String       @id @default(uuid()) @db.Uuid
+  userId             String       @db.Uuid
+  name               String
+  period             BudgetPeriod @default(MONTHLY)
+  startDate          DateTime     @db.Date
+  endDate            DateTime     @db.Date
+  mode               BudgetMode   @default(STANDARD)
+  /// Planned income for the period (used by zero-based mode and percentage items).
+  plannedIncomeCents BigInt?
+  notes              String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items BudgetItem[]
+
+  @@unique([userId, period, startDate, name])
+  @@index([userId, startDate])
+  @@map("budgets")
+}
+
+enum BudgetAmountType {
+  FIXED
+  PERCENT_OF_INCOME
+}
+
+model BudgetItem {
+  id               String           @id @default(uuid()) @db.Uuid
+  userId           String           @db.Uuid
+  budgetId         String           @db.Uuid
+  /// Null categoryId = an allocation line without a spending category (e.g. "Savings" in zero-based mode).
+  categoryId       String?          @db.Uuid
+  label            String?
+  amountType       BudgetAmountType @default(FIXED)
+  amountCents      BigInt           @default(0)
+  /// Basis points of planned income when amountType = PERCENT_OF_INCOME (1000 = 10%).
+  percentBps       Int?
+  rolloverEnabled  Boolean          @default(false)
+  /// Alert thresholds in percent, e.g. [80, 100].
+  alertThresholds  Int[]            @default([80, 100])
+  sortOrder        Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  budget   Budget    @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, categoryId])
+  @@index([userId])
+  @@map("budget_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Goals, income & allocation
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Goal {
+  id              String     @id @default(uuid()) @db.Uuid
+  userId          String     @db.Uuid
+  name            String
+  description     String?
+  icon            String     @default("target")
+  color           String     @default("#0ea5e9")
+  targetCents     BigInt
+  /// Sum of contributions (kept in sync inside the same DB transaction as each contribution).
+  currentCents    BigInt     @default(0)
+  deadline        DateTime?  @db.Date
+  priority        Priority   @default(MEDIUM)
+  status          GoalStatus @default(ACTIVE)
+  /// Optional account where the user keeps this money (informational only).
+  linkedAccountId String?    @db.Uuid
+  sortOrder       Int        @default(0)
+  completedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  linkedAccount  Account?           @relation(fields: [linkedAccountId], references: [id], onDelete: SetNull)
+  contributions  GoalContribution[]
+  allocationItems AllocationItem[]
+
+  @@index([userId, status])
+  @@map("goals")
+}
+
+/// PLANNED_ALLOCATION: a budgeting instruction — no money moved.
+/// USER_REPORTED_TRANSFER: the user says they moved money themselves.
+/// PROVIDER_TRANSFER: reserved for a verified transfer executed by a regulated
+///   money-movement provider. The application never creates these in v1.
+enum ContributionKind {
+  PLANNED_ALLOCATION
+  USER_REPORTED_TRANSFER
+  PROVIDER_TRANSFER
+}
+
+enum ContributionSource {
+  MANUAL
+  AUTOMATION
+  ROUND_UP
+  ALLOCATION_PLAN
+  ONBOARDING
+}
+
+model GoalContribution {
+  id            String             @id @default(uuid()) @db.Uuid
+  userId        String             @db.Uuid
+  goalId        String             @db.Uuid
+  amountCents   BigInt
+  date          DateTime           @db.Date
+  kind          ContributionKind   @default(PLANNED_ALLOCATION)
+  source        ContributionSource @default(MANUAL)
+  note          String?
+  automationId  String?            @db.Uuid
+  transactionId String?            @db.Uuid
+  /// Idempotency key for automated allocations (e.g. "automation:<id>:txn:<id>").
+  idempotencyKey String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal        Goal         @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  automation  Automation?  @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, idempotencyKey])
+  @@index([goalId, date])
+  @@map("goal_contributions")
+}
+
+enum Frequency {
+  WEEKLY
+  BIWEEKLY
+  SEMI_MONTHLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  IRREGULAR
+  ONE_TIME
+}
+
+model IncomeSource {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  name                String
+  /// Normalised merchant/description pattern that identifies this income in transactions.
+  matchPattern        String?
+  accountId           String?   @db.Uuid
+  frequency           Frequency @default(BIWEEKLY)
+  averageAmountCents  BigInt
+  lastPaidDate        DateTime? @db.Date
+  nextExpectedDate    DateTime? @db.Date
+  /// SEMI_MONTHLY pay days, e.g. [15, 31] (31 = last day of month).
+  semiMonthlyDays     Int[]     @default([15, 31])
+  isPrimary           Boolean   @default(false)
+  isDetected          Boolean   @default(false)
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  allocationPlans AllocationPlan[]
+
+  @@index([userId, isActive])
+  @@map("income_sources")
+}
+
+/// "Every paycheck: 50% needs / 20% wants / 20% savings / 10% flexible".
+/// Produces PLANNED allocations only.
+model AllocationPlan {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  name           String
+  incomeSourceId String?  @db.Uuid
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incomeSource IncomeSource?    @relation(fields: [incomeSourceId], references: [id], onDelete: SetNull)
+  items        AllocationItem[]
+
+  @@index([userId])
+  @@map("allocation_plans")
+}
+
+enum AllocationMethod {
+  PERCENT
+  FIXED
+}
+
+model AllocationItem {
+  id          String           @id @default(uuid()) @db.Uuid
+  planId      String           @db.Uuid
+  label       String
+  method      AllocationMethod @default(PERCENT)
+  percentBps  Int?
+  amountCents BigInt?
+  categoryId  String?          @db.Uuid
+  goalId      String?          @db.Uuid
+  sortOrder   Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  plan     AllocationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  category Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  goal     Goal?          @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@index([planId])
+  @@map("allocation_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recurring, subscriptions & bills
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum RecurringStatus {
+  SUGGESTED
+  CONFIRMED
+  DISMISSED
+}
+
+enum FlowDirection {
+  INFLOW
+  OUTFLOW
+}
+
+model RecurringTransaction {
+  id                 String          @id @default(uuid()) @db.Uuid
+  userId             String          @db.Uuid
+  merchantId         String?         @db.Uuid
+  accountId          String?         @db.Uuid
+  categoryId         String?         @db.Uuid
+  name               String
+  /// Normalised merchant key the series was detected on (unique per user & direction).
+  seriesKey          String
+  direction          FlowDirection
+  frequency          Frequency
+  averageAmountCents BigInt
+  lastAmountCents    BigInt
+  lastDate           DateTime        @db.Date
+  nextExpectedDate   DateTime?       @db.Date
+  occurrenceCount    Int
+  /// 0–100
+  confidence         Int
+  status             RecurringStatus @default(SUGGESTED)
+  isSubscription     Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant      Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  account       Account?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  category      Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  transactions  Transaction[]
+  subscriptions Subscription[]
+  bills         Bill[]
+
+  @@unique([userId, seriesKey, direction])
+  @@index([userId, status])
+  @@map("recurring_transactions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+model Subscription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @db.Uuid
+  name               String
+  merchantId         String?            @db.Uuid
+  recurringId        String?            @db.Uuid
+  categoryId         String?            @db.Uuid
+  accountId          String?            @db.Uuid
+  amountCents        BigInt
+  currency           String             @default("CAD") @db.VarChar(3)
+  frequency          Frequency          @default(MONTHLY)
+  nextChargeDate     DateTime?          @db.Date
+  reminderDaysBefore Int?
+  status             SubscriptionStatus @default(ACTIVE)
+  isDetected         Boolean            @default(false)
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant  Merchant?             @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  recurring RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  category  Category?             @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  account   Account?              @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+model Bill {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  name               String
+  amountCents        BigInt
+  isVariableAmount   Boolean   @default(false)
+  /// First (or only) due date; later occurrences are derived from `frequency`.
+  anchorDate         DateTime  @db.Date
+  frequency          Frequency @default(MONTHLY)
+  endDate            DateTime? @db.Date
+  categoryId         String?   @db.Uuid
+  accountId          String?   @db.Uuid
+  recurringId        String?   @db.Uuid
+  autopay            Boolean   @default(false)
+  reminderDaysBefore Int?      @default(3)
+  notes              String?
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  Category?             @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  account   Account?              @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  recurring RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  payments  BillPayment[]
+
+  @@index([userId, isActive])
+  @@map("bills")
+}
+
+/// Records that one occurrence (identified by its due date) of a bill was paid.
+model BillPayment {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  billId        String   @db.Uuid
+  dueDate       DateTime @db.Date
+  amountCents   BigInt
+  paidAt        DateTime @default(now())
+  transactionId String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bill        Bill         @relation(fields: [billId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([billId, dueDate])
+  @@index([userId])
+  @@map("bill_payments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Automation engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum AutomationTrigger {
+  TRANSACTION_CREATED
+  INCOME_RECEIVED
+  SCHEDULE_MONTHLY
+  SCHEDULE_WEEKLY
+  SUBSCRIPTION_DETECTED
+  BUDGET_THRESHOLD
+}
+
+enum ConditionLogic {
+  ALL
+  ANY
+}
+
+model Automation {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @db.Uuid
+  name            String
+  description     String?
+  trigger         AutomationTrigger
+  /// Trigger options, e.g. { dayOfMonth: 1 } or { thresholdPercent: 80, categoryId }. Validated by zod.
+  triggerConfig   Json              @default("{}")
+  conditionLogic  ConditionLogic    @default(ALL)
+  isActive        Boolean           @default(true)
+  priority        Int               @default(100)
+  lastExecutedAt  DateTime?
+  executionCount  Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conditions    AutomationCondition[]
+  actions       AutomationAction[]
+  runs          AutomationRun[]
+  contributions GoalContribution[]
+
+  @@index([userId, trigger, isActive])
+  @@map("automations")
+}
+
+enum ConditionField {
+  MERCHANT
+  DESCRIPTION
+  AMOUNT
+  CATEGORY
+  ACCOUNT
+  TYPE
+}
+
+enum ConditionOperator {
+  EQUALS
+  NOT_EQUALS
+  CONTAINS
+  STARTS_WITH
+  GREATER_THAN
+  GREATER_THAN_OR_EQUAL
+  LESS_THAN
+  LESS_THAN_OR_EQUAL
+}
+
+model AutomationCondition {
+  id           String            @id @default(uuid()) @db.Uuid
+  automationId String            @db.Uuid
+  field        ConditionField
+  operator     ConditionOperator
+  /// Text value, category/account id, transaction type, or amount in cents (as a string).
+  value        String
+  sortOrder    Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+  @@map("automation_conditions")
+}
+
+enum AutomationActionType {
+  SET_CATEGORY
+  ADD_TAG
+  MARK_TRANSFER
+  MARK_RECURRING
+  SET_NOTE
+  RENAME_MERCHANT
+  ALLOCATE_TO_GOAL
+  ROUND_UP_TO_GOAL
+  NOTIFY
+}
+
+model AutomationAction {
+  id           String               @id @default(uuid()) @db.Uuid
+  automationId String               @db.Uuid
+  type         AutomationActionType
+  /// Action options (categoryId, tagName, goalId, percentBps, amountCents, …). Validated by zod.
+  config       Json                 @default("{}")
+  sortOrder    Int                  @default(0)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+  @@map("automation_actions")
+}
+
+enum AutomationRunStatus {
+  SUCCESS
+  SKIPPED
+  FAILED
+}
+
+model AutomationRun {
+  id             String              @id @default(uuid()) @db.Uuid
+  userId         String              @db.Uuid
+  automationId   String              @db.Uuid
+  transactionId  String?             @db.Uuid
+  /// Makes each (automation, event) pair execute at most once.
+  idempotencyKey String
+  status         AutomationRunStatus
+  summary        String?
+  executedAt     DateTime            @default(now())
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  automation  Automation   @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([automationId, idempotencyKey])
+  @@index([userId, executedAt])
+  @@map("automation_runs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum NotificationType {
+  BUDGET_WARNING
+  GOAL_PROGRESS
+  GOAL_DEADLINE
+  UPCOMING_BILL
+  SUBSCRIPTION
+  LARGE_TRANSACTION
+  SYNC_FAILURE
+  PAYDAY
+  AUTOMATION
+  SYSTEM
+}
+
+enum NotificationSeverity {
+  INFO
+  SUCCESS
+  WARNING
+  CRITICAL
+}
+
+model Notification {
+  id        String               @id @default(uuid()) @db.Uuid
+  userId    String               @db.Uuid
+  type      NotificationType
+  severity  NotificationSeverity @default(INFO)
+  title     String
+  body      String
+  href      String?
+  /// Prevents the same alert from being generated twice (e.g. "budget:<itemId>:80").
+  dedupeKey String?
+  readAt    DateTime?
+  metadata  Json                 @default("{}")
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  inApp     Boolean          @default(true)
+  email     Boolean          @default(false)
+  push      Boolean          @default(false)
+  sms       Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@map("notification_preferences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Net worth & currency
+// ─────────────────────────────────────────────────────────────────────────────
+
+model NetWorthSnapshot {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  date             DateTime @db.Date
+  assetsCents      BigInt
+  liabilitiesCents BigInt
+  netWorthCents    BigInt
+  /// { cash, investments, otherAssets, creditCards, loans, otherLiabilities } in cents (as strings).
+  breakdown        Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@map("net_worth_snapshots")
+}
+
+/// User-maintained FX rates (used only when ENABLE_MULTI_CURRENCY is on).
+model ExchangeRate {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  base      String   @db.VarChar(3)
+  quote     String   @db.VarChar(3)
+  /// 1 unit of `base` = `rate` units of `quote`.
+  rate      Decimal  @db.Decimal(18, 8)
+  asOf      DateTime @db.Date
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, base, quote])
+  @@map("exchange_rates")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUTURE: internal double-entry ledger (see lib/ledger and docs/ARCHITECTURE.md)
+// Not used in v1. Reserved for money actually held through a regulated partner.
+// Kept strictly separate from the aggregation models above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model LedgerAccount {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String?           @db.Uuid
+  code      String            @unique
+  name      String
+  type      LedgerAccountType
+  currency  String            @db.VarChar(3)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  user    User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  entries LedgerEntry[]
+
+  @@map("ledger_accounts")
+}
+
+model LedgerJournalEntry {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @db.Uuid
+  /// Unique key from the originating money-movement event (never post twice).
+  idempotencyKey String   @unique
+  description    String
+  effectiveAt    DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user    User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  entries LedgerEntry[]
+
+  @@map("ledger_journal_entries")
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  journalEntryId  String          @db.Uuid
+  ledgerAccountId String          @db.Uuid
+  direction       LedgerDirection
+  amountCents     BigInt
+  currency        String          @db.VarChar(3)
+  createdAt       DateTime        @default(now())
+
+  journalEntry  LedgerJournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  ledgerAccount LedgerAccount      @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+
+  @@index([ledgerAccountId])
+  @@index([journalEntryId])
+  @@map("ledger_entries")
+}
