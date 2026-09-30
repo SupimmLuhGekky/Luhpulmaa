@@ -33,6 +33,16 @@ export function normalizeMerchant(raw: string | null | undefined): string {
   return words.join(" ").trim().slice(0, 80);
 }
 
+/**
+ * Lower-case ASCII text with punctuation removed but every word kept. Used for keyword
+ * rules, where words like "payment" or a city name can matter ("HYDRO-QUEBEC",
+ * "PAYMENT THANK YOU"), unlike the merchant key above which drops them.
+ */
+export function normalizeText(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return stripAccents(raw).toLowerCase().replace(/[^a-z0-9&]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** Title-cases a normalised key for display when no better merchant name exists. */
 export function displayMerchant(raw: string): string {
   const key = normalizeMerchant(raw) || raw.trim().toLowerCase();

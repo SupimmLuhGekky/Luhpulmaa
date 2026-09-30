@@ -12,7 +12,7 @@
  * The engine also infers the transaction type (income/expense/transfer/refund).
  */
 import type { CategorizationSource, TransactionType } from "@prisma/client";
-import { normalizeMerchant } from "./normalize";
+import { normalizeMerchant, normalizeText } from "./normalize";
 import { containsKeyword, INCOME_KEYWORDS, matchSystemRule, REFUND_KEYWORDS, TRANSFER_KEYWORDS } from "./system-rules";
 
 /** Number of identical corrections before a merchant preference is learned. */
@@ -84,7 +84,7 @@ export function matchMerchantRule(normalized: string, rules: MerchantRuleRef[]):
 }
 
 export function inferType(input: CategorizationInput, normalized: string, categoryKind?: CategoryRef["kind"]): { type: TransactionType; isTransfer: boolean } {
-  const text = `${normalized} ${normalizeMerchant(input.description)}`;
+  const text = [normalized, normalizeText(input.merchantName), normalizeText(input.description)].filter(Boolean).join(" | ");
   if (categoryKind === "TRANSFER" || containsKeyword(text, TRANSFER_KEYWORDS)) return { type: "TRANSFER", isTransfer: true };
   if (input.amountCents > 0) {
     if (containsKeyword(text, REFUND_KEYWORDS)) return { type: "REFUND", isTransfer: false };
@@ -96,7 +96,8 @@ export function inferType(input: CategorizationInput, normalized: string, catego
 
 export function categorize(input: CategorizationInput, ctx: CategorizationContext): CategorizationResult {
   const normalized = normalizeMerchant(input.merchantName || input.description) || normalizeMerchant(input.description);
-  const fullText = `${normalized} ${normalizeMerchant(input.description)}`.trim();
+  // Keyword rules look at every word of the merchant and description ("hydro quebec paiement").
+  const fullText = [normalized, normalizeText(input.merchantName), normalizeText(input.description)].filter(Boolean).join(" | ");
   const finish = (
     cat: CategoryRef | null,
     subcategoryId: string | null,

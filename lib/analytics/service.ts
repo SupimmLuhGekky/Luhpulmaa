@@ -110,7 +110,7 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
 
   // Goal savings progress over time (cumulative contributions by month).
   const goalRows = await prisma.$queryRaw<{ month: Date; total: bigint }[]>`
-    SELECT date_trunc('month', "date")::date AS month, SUM("amountCents") AS total
+    SELECT date_trunc('month', "date")::date AS month, SUM("amountCents")::bigint AS total
     FROM "goal_contributions" WHERE "userId" = ${userId}::uuid GROUP BY 1 ORDER BY 1`;
   let running = 0;
   const savingsProgress = goalRows.map((r) => {

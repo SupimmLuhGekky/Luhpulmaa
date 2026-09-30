@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { passwordSchema } from "./password";
+
+export const passwordSchema = z
+  .string()
+  .min(10, "Use at least 10 characters")
+  .max(128, "Use at most 128 characters")
+  .refine((v) => /[a-z]/i.test(v) && /\d/.test(v), "Include at least one letter and one number");
 
 export const emailSchema = z
   .string()

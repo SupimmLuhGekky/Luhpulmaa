@@ -281,7 +281,9 @@ export async function checkBudgetAlerts(userId: string, today: LocalDate) {
   for (const line of view.lines) {
     if (line.available <= 0 && line.spent <= 0) continue;
     const usedPercent = Math.floor(line.usedBps / 100);
-    const thresholds = (line.alertThresholds.length ? line.alertThresholds : prefs.budgetAlertThresholds).filter((t) => usedPercent >= t);
+    // Thresholds below 100% fire when reached; 100% and above fire only when exceeded,
+    // so a rent line that is exactly on budget doesn't raise an alarm.
+    const thresholds = (line.alertThresholds.length ? line.alertThresholds : prefs.budgetAlertThresholds).filter((t) => (t < 100 ? usedPercent >= t : line.usedBps > t * 100));
     const crossed = thresholds.length ? Math.max(...thresholds) : null;
     if (crossed !== null) {
       await notify(userId, {

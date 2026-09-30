@@ -1,0 +1,230 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens. Components only ever use these semantic names (bg-card,
+ * text-muted-foreground, border-border…) so light/dark themes stay consistent.
+ */
+:root {
+  --background: #f6f7f9;
+  --foreground: #0c1222;
+  --card: #ffffff;
+  --card-foreground: #0c1222;
+  --popover: #ffffff;
+  --popover-foreground: #0c1222;
+  --muted: #eef1f4;
+  --muted-foreground: #5a6474;
+  --subtle: #f8f9fb;
+  --border: #e3e7ec;
+  --input: #d7dce3;
+  --ring: #0f766e;
+  --primary: #0f766e;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e6f4f2;
+  --secondary: #eef1f4;
+  --secondary-foreground: #0c1222;
+  --accent: #eef1f4;
+  --accent-foreground: #0c1222;
+  --positive: #15803d;
+  --positive-soft: #e8f5ec;
+  --negative: #c2410c;
+  --negative-soft: #fdf0e8;
+  --warning: #b45309;
+  --warning-soft: #fdf4e3;
+  --danger: #dc2626;
+  --danger-soft: #fdecec;
+  --info: #2563eb;
+  --info-soft: #e9f0fe;
+  --chart-1: #0f766e;
+  --chart-2: #2563eb;
+  --chart-3: #d97706;
+  --chart-4: #9333ea;
+  --chart-5: #db2777;
+  --chart-6: #65a30d;
+  --shadow-color: 220 20% 20%;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0a0d12;
+  --foreground: #e7eaef;
+  --card: #10151c;
+  --card-foreground: #e7eaef;
+  --popover: #121821;
+  --popover-foreground: #e7eaef;
+  --muted: #18202a;
+  --muted-foreground: #8d97a7;
+  --subtle: #0d1117;
+  --border: #1e2631;
+  --input: #2a3441;
+  --ring: #2dd4bf;
+  --primary: #2dd4bf;
+  --primary-foreground: #04201d;
+  --primary-soft: #0f2a28;
+  --secondary: #18202a;
+  --secondary-foreground: #e7eaef;
+  --accent: #1a2330;
+  --accent-foreground: #e7eaef;
+  --positive: #4ade80;
+  --positive-soft: #11261a;
+  --negative: #fb923c;
+  --negative-soft: #2a1a10;
+  --warning: #fbbf24;
+  --warning-soft: #2a220f;
+  --danger: #f87171;
+  --danger-soft: #2c1414;
+  --info: #60a5fa;
+  --info-soft: #111f36;
+  --chart-1: #2dd4bf;
+  --chart-2: #60a5fa;
+  --chart-3: #fbbf24;
+  --chart-4: #c084fc;
+  --chart-5: #f472b6;
+  --chart-6: #a3e635;
+  --shadow-color: 220 40% 2%;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle: var(--subtle);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --shadow-soft: 0 1px 2px hsl(var(--shadow-color) / 0.04), 0 1px 3px hsl(var(--shadow-color) / 0.06);
+  --shadow-pop: 0 8px 30px hsl(var(--shadow-color) / 0.12), 0 2px 6px hsl(var(--shadow-color) / 0.08);
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-slide-in-right: slide-in-right 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in-bottom: slide-in-bottom 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-scale-in: scale-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-bottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 25%, transparent);
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* react-day-picker theme (see components/ui/date-picker.tsx) */
+.rdp-root {
+  --rdp-accent-color: var(--primary);
+  --rdp-accent-background-color: var(--primary-soft);
+  --rdp-day-height: 36px;
+  --rdp-day-width: 36px;
+  --rdp-day_button-height: 34px;
+  --rdp-day_button-width: 34px;
+  --rdp-day_button-border-radius: 0.5rem;
+  --rdp-nav_button-height: 2rem;
+  --rdp-nav_button-width: 2rem;
+  --rdp-nav-height: 2.25rem;
+  --rdp-selected-border: 2px solid var(--primary);
+  font-size: 0.8125rem;
+}
+.rdp-root .rdp-selected .rdp-day_button {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.rdp-root .rdp-caption_label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.rdp-root .rdp-day_button:hover {
+  background: var(--accent);
+}

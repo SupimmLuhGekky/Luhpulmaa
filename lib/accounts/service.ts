@@ -1,5 +1,5 @@
 import "server-only";
-import type { AccountType } from "@prisma/client";
+import type { AccountType, ProviderType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
@@ -242,8 +242,9 @@ export function mockInstitutions() {
  * Completes a provider link: exchanges the public token, stores the encrypted access
  * token, then runs the first sync (accounts, balances, transactions, categorisation).
  */
-export async function completeConnection(userId: string, publicToken: string, metadata?: Record<string, unknown>) {
-  const provider = getDefaultProvider();
+export async function completeConnection(userId: string, publicToken: string, metadata?: Record<string, unknown>, opts: { providerType?: ProviderType } = {}) {
+  // Only the demo seeder picks a provider explicitly (always MOCK); users get the configured one.
+  const provider = opts.providerType ? getProvider(opts.providerType) : getDefaultProvider();
   const exchange = await provider.exchangePublicToken(userId, publicToken, metadata);
   const institution = await prisma.institution.upsert({
     where: { provider_providerInstitutionId: { provider: provider.id, providerInstitutionId: exchange.institution.providerInstitutionId } },

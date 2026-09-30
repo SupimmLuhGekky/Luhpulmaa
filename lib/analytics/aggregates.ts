@@ -52,8 +52,8 @@ export async function incomeSpendingSeries(userId: string, from: LocalDate, to: 
   const trunc = bucket === "month" ? "month" : bucket === "week" ? "week" : "day";
   const rows = await prisma.$queryRaw<{ period: Date; income: bigint | null; spending: bigint | null }[]>`
     SELECT date_trunc(${trunc}, "date")::date AS period,
-           SUM(CASE WHEN "type" = 'INCOME' THEN "amountCents" ELSE 0 END) AS income,
-           -SUM(CASE WHEN "type" IN ('EXPENSE','REFUND') THEN "amountCents" ELSE 0 END) AS spending
+           SUM(CASE WHEN "type" = 'INCOME' THEN "amountCents" ELSE 0 END)::bigint AS income,
+           (-SUM(CASE WHEN "type" IN ('EXPENSE','REFUND') THEN "amountCents" ELSE 0 END))::bigint AS spending
     FROM "transactions"
     WHERE "userId" = ${userId}::uuid
       AND "date" BETWEEN ${toDbDate(from)} AND ${toDbDate(to)}
@@ -80,7 +80,7 @@ export async function spendingByMerchant(userId: string, from: LocalDate, to: Lo
 
 export async function spendingByCategoryPerMonth(userId: string, from: LocalDate, to: LocalDate) {
   const rows = await prisma.$queryRaw<{ month: Date; categoryId: string | null; spending: bigint }[]>`
-    SELECT date_trunc('month', "date")::date AS month, "categoryId", -SUM("amountCents") AS spending
+    SELECT date_trunc('month', "date")::date AS month, "categoryId", (-SUM("amountCents"))::bigint AS spending
     FROM "transactions"
     WHERE "userId" = ${userId}::uuid AND "date" BETWEEN ${toDbDate(from)} AND ${toDbDate(to)}
       AND "isTransfer" = false AND "isExcluded" = false AND "type" IN ('EXPENSE','REFUND')

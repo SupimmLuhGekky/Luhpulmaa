@@ -67,6 +67,12 @@ export const SYSTEM_RULES: SystemRule[] = [
   { pattern: "restaurant", categoryKey: "restaurants", subcategory: "Dining out" },
   { pattern: "cafe", categoryKey: "restaurants", subcategory: "Coffee" },
   { pattern: "pizza", categoryKey: "restaurants", subcategory: "Dining out" },
+  { pattern: "pizzeria", categoryKey: "restaurants", subcategory: "Dining out" },
+  { pattern: "trattoria", categoryKey: "restaurants", subcategory: "Dining out" },
+  { pattern: "bistro", categoryKey: "restaurants", subcategory: "Dining out" },
+  { pattern: "brasserie", categoryKey: "restaurants", subcategory: "Dining out" },
+  { pattern: "boulangerie", categoryKey: "restaurants", subcategory: "Coffee" },
+  { pattern: "patisserie", categoryKey: "restaurants", subcategory: "Coffee" },
   { pattern: "sushi", categoryKey: "restaurants", subcategory: "Dining out" },
   // Subscriptions
   { pattern: "netflix", categoryKey: "subscriptions", subcategory: "Streaming", subscription: true },
@@ -174,6 +180,9 @@ export const SYSTEM_RULES: SystemRule[] = [
   // Fees
   { pattern: "service charge", categoryKey: "fees", subcategory: "Bank fees" },
   { pattern: "monthly fee", categoryKey: "fees", subcategory: "Bank fees" },
+  { pattern: "account fee", categoryKey: "fees", subcategory: "Bank fees" },
+  { pattern: "plan fee", categoryKey: "fees", subcategory: "Bank fees" },
+  { pattern: "atm fee", categoryKey: "fees", subcategory: "Bank fees" },
   { pattern: "frais", categoryKey: "fees", subcategory: "Bank fees" },
   { pattern: "overdraft", categoryKey: "fees", subcategory: "Bank fees" },
   { pattern: "nsf", categoryKey: "fees", subcategory: "Bank fees" },

@@ -1,13 +1,8 @@
+import "server-only";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
+export { passwordSchema } from "./schemas";
 
 const COST = 12;
-
-export const passwordSchema = z
-  .string()
-  .min(10, "Use at least 10 characters")
-  .max(128, "Use at most 128 characters")
-  .refine((v) => /[a-z]/i.test(v) && /\d/.test(v), "Include at least one letter and one number");
 
 export async function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, COST);

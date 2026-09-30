@@ -9,6 +9,7 @@ import { ingestTransactions } from "@/lib/transactions/ingest";
 import { matchTransfers } from "@/lib/transactions/transfers";
 import { detectAndPersistRecurring } from "@/lib/recurring/service";
 import { recordNetWorthSnapshot } from "@/lib/networth/service";
+import { reconstructHistory } from "@/lib/networth/history";
 import { notify } from "@/lib/notifications/service";
 import { audit } from "@/lib/audit";
 
@@ -155,6 +156,8 @@ export async function syncConnection(userId: string, connectionId: string, trigg
       await detectAndPersistRecurring(userId, { today });
     }
     await recordNetWorthSnapshot(userId, today);
+    // First sync: rebuild balance and net-worth history from the imported transactions.
+    if (!connection.lastSyncedAt) await reconstructHistory(userId, [...accountMap.values()], today, INITIAL_HISTORY_DAYS);
 
     await prisma.providerConnection.update({ where: { id: connection.id }, data: { lastSyncedAt: new Date(), lastSyncError: null, status: "ACTIVE", syncCursor: cursor } });
     await prisma.syncLog.update({

@@ -112,60 +112,74 @@ function pickDiscretionary(rand: () => number): Discretionary {
   return DISCRETIONARY[0];
 }
 
+/** Everything that happens on one calendar day except the credit-card payment. */
+function dayTransactions(seed: number, anchor: LocalDate, d: LocalDate): MockTxn[] {
+  const out: MockTxn[] = [];
+  const day = Number(d.slice(8, 10));
+  const monthRand = prng(hashString(`${seed}:${d.slice(0, 7)}`));
+  const add = (accountKey: MockTxn["accountKey"], n: number, amountCents: number, description: string, merchantName: string | null) =>
+    out.push({ id: `mk_${seed.toString(36)}_${d.replace(/-/g, "")}_${accountKey[0]}${n}`, accountKey, date: d, amountCents, description, merchantName });
+
+  const payAmount = 184_500 + (seed % 7) * 500;
+  const firstPayday = addDays(anchor, 4);
+  // Biweekly paycheque (Friday cadence from the anchor)
+  const sincePay = daysBetween(firstPayday, d);
+  if (sincePay >= 0 && sincePay % 14 === 0) {
+    const bonus = prng(hashString(`${seed}:pay:${d}`))() < 0.1 ? 15_000 : 0;
+    add("chequing", 1, payAmount + bonus, "HARBOURFRONT GRILL PAYROLL DEP", "Harbourfront Grill");
+    // Automatic transfer to savings on payday
+    add("chequing", 2, -25_000, "ONLINE TRANSFER TO SAVINGS", null);
+  }
+  if (sincePay >= 0 && sincePay % 14 === 0) add("savings", 1, 25_000, "ONLINE TRANSFER FROM CHEQUING", null);
+  if (day === 1) add("chequing", 3, -125_000, "INTERAC E-TRANSFER RENT - LANDLORD", "Rent");
+  if (day === 1) add("chequing", 4, -9_700, "STM OPUS MONTHLY PASS", "STM");
+  if (day === 3) add("chequing", 5, -6_500, "FIZZ MOBILE PREAUTHORIZED", "Fizz");
+  if (day === 8) add("credit", 1, -2_299, "NETFLIX.COM", "Netflix");
+  if (day === 12) add("chequing", 6, -7_500, "VIDEOTRON LTEE INTERNET", "Vidéotron");
+  if (day === 16) add("credit", 2, -1_199, "SPOTIFY P1C3B2", "Spotify");
+  if (day === 18) add("chequing", 7, -between(monthRand, 6_800, 11_500), "HYDRO-QUEBEC PAIEMENT", "Hydro-Québec");
+  if (day === 20) add("chequing", 8, -8_950, "DESJARDINS ASSURANCES PAD", "Desjardins Assurances");
+  if (day === 22) add("credit", 3, -3_499, "ENERGIE CARDIO MEMBERSHIP", "Énergie Cardio");
+  if (day === 28) add("savings", 2, between(monthRand, 850, 1_250), "INTEREST PAID", null);
+  if (day === 5 && Number(d.slice(5, 7)) % 3 === 0) add("chequing", 10, -1_495, "MONTHLY ACCOUNT FEE", null);
+
+  // Day-to-day spending: 0–3 purchases a day
+  const rand = prng(hashString(`${seed}:day:${d}`));
+  const count = Math.floor(rand() * 3.2);
+  for (let i = 0; i < count; i++) {
+    const pick = pickDiscretionary(rand);
+    add(pick.account, 20 + i, -between(rand, pick.min, pick.max), pick.description, pick.merchant);
+  }
+  // Occasional refund
+  if (rand() < 0.02) add("credit", 30, between(rand, 1_500, 6_000), "AMZN MKTP CA REFUND", "Amazon");
+  return out;
+}
+
 /**
  * Generates all simulated transactions for a connection between `start` and `end`.
  * `anchor` is the connection's history start and fixes the biweekly pay cycle.
+ * Every value is a pure function of (seed, anchor, date), so any window returns the
+ * same ids and amounts — which is what makes sync idempotency testable.
  */
 export function generateMockTransactions(seed: number, anchor: LocalDate, start: LocalDate, end: LocalDate): MockTxn[] {
   const out: MockTxn[] = [];
   const from = start < anchor ? anchor : start;
   if (end < from) return out;
-  const payAmount = 141_500 + (seed % 7) * 500;
-  const firstPayday = addDays(anchor, 4);
-
   for (let d = from; d <= end; d = addDays(d, 1)) {
-    const day = Number(d.slice(8, 10));
-    const monthSeed = hashString(`${seed}:${d.slice(0, 7)}`);
-    const monthRand = prng(monthSeed);
-    const add = (accountKey: MockTxn["accountKey"], n: number, amountCents: number, description: string, merchantName: string | null) =>
-      out.push({ id: `mk_${seed.toString(36)}_${d.replace(/-/g, "")}_${accountKey[0]}${n}`, accountKey, date: d, amountCents, description, merchantName });
-
-    // Biweekly paycheque (Friday cadence from the anchor)
-    const sincePay = daysBetween(firstPayday, d);
-    if (sincePay >= 0 && sincePay % 14 === 0) {
-      const bonus = prng(hashString(`${seed}:pay:${d}`))() < 0.1 ? 12_000 : 0;
-      add("chequing", 1, payAmount + bonus, "HARBOURFRONT GRILL PAYROLL DEP", "Harbourfront Grill");
-      // Automatic transfer to savings the day after payday
-      add("chequing", 2, -20_000, "ONLINE TRANSFER TO SAVINGS", null);
+    out.push(...dayTransactions(seed, anchor, d));
+    if (Number(d.slice(8, 10)) === 26) {
+      // Pay the card's statement in full: everything charged since the previous payment day.
+      const cycleStart = addMonths(d, -1) < anchor ? anchor : addMonths(d, -1);
+      let statement = 0;
+      for (let c = cycleStart; c < d; c = addDays(c, 1)) {
+        for (const t of dayTransactions(seed, anchor, c)) if (t.accountKey === "credit") statement -= t.amountCents;
+      }
+      if (statement > 0) {
+        const id = (k: string, n: number) => `mk_${seed.toString(36)}_${d.replace(/-/g, "")}_${k}${n}`;
+        out.push({ id: id("c", 9), accountKey: "chequing", date: d, amountCents: -statement, description: "VISA PAYMENT - CASHBACK VISA", merchantName: null });
+        out.push({ id: id("c", 4), accountKey: "credit", date: d, amountCents: statement, description: "PAYMENT THANK YOU / PAIEMENT MERCI", merchantName: null });
+      }
     }
-    if (sincePay >= 1 && sincePay % 14 === 1) add("savings", 1, 20_000, "ONLINE TRANSFER FROM CHEQUING", null);
-    if (day === 1) add("chequing", 3, -125_000, "INTERAC E-TRANSFER RENT - LANDLORD", "Rent");
-    if (day === 1) add("chequing", 4, -9_700, "STM OPUS MONTHLY PASS", "STM");
-    if (day === 3) add("chequing", 5, -6_500, "FIZZ MOBILE PREAUTHORIZED", "Fizz");
-    if (day === 8) add("credit", 1, -2_299, "NETFLIX.COM", "Netflix");
-    if (day === 12) add("chequing", 6, -7_500, "VIDEOTRON LTEE INTERNET", "Vidéotron");
-    if (day === 16) add("credit", 2, -1_199, "SPOTIFY P1C3B2", "Spotify");
-    if (day === 18) add("chequing", 7, -between(monthRand, 6_800, 11_500), "HYDRO-QUEBEC PAIEMENT", "Hydro-Québec");
-    if (day === 20) add("chequing", 8, -8_950, "DESJARDINS ASSURANCES PAD", "Desjardins Assurances");
-    if (day === 22) add("credit", 3, -3_499, "ENERGIE CARDIO MEMBERSHIP", "Énergie Cardio");
-    if (day === 28) add("savings", 2, between(monthRand, 850, 1_250), "INTEREST PAID", null);
-    if (day === 26) {
-      // Pay the credit card statement from chequing
-      const amount = 60_000 + Math.floor(monthRand() * 25_000);
-      add("chequing", 9, -amount, "VISA PAYMENT - CASHBACK VISA", null);
-      add("credit", 4, amount, "PAYMENT THANK YOU / PAIEMENT MERCI", null);
-    }
-    if (day === 5 && Number(d.slice(5, 7)) % 3 === 0) add("chequing", 10, -1_495, "MONTHLY ACCOUNT FEE", null);
-
-    // Day-to-day spending: 0–3 purchases a day
-    const rand = prng(hashString(`${seed}:day:${d}`));
-    const count = Math.floor(rand() * 3.2);
-    for (let i = 0; i < count; i++) {
-      const pick = pickDiscretionary(rand);
-      add(pick.account, 20 + i, -between(rand, pick.min, pick.max), pick.description, pick.merchant);
-    }
-    // Occasional refund
-    if (rand() < 0.02) add("credit", 30, between(rand, 1_500, 6_000), "AMZN MKTP CA REFUND", "Amazon");
   }
   return out;
 }

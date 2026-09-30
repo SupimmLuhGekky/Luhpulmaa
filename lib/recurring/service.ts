@@ -40,7 +40,9 @@ export async function detectAndPersistRecurring(userId: string, opts: { today?: 
     const existing = await prisma.recurringTransaction.findUnique({ where: { userId_seriesKey_direction: { userId, seriesKey: s.seriesKey, direction: s.direction } } });
     if (existing?.status === "DISMISSED") continue;
     const cat = s.categoryId ? catById.get(s.categoryId) : undefined;
-    const isSubscription = s.isSubscriptionLike || (s.direction === "OUTFLOW" && cat?.id === subscriptionsCat?.id);
+    // Housing, utility, insurance and tuition series are bills even when their amount is fixed.
+    const isBillCategory = Boolean(cat?.systemKey && BILL_CATEGORY_KEYS.has(cat.systemKey));
+    const isSubscription = !isBillCategory && (s.isSubscriptionLike || (s.direction === "OUTFLOW" && cat?.id === subscriptionsCat?.id));
     const merchantId = merchantByTxn.get(s.transactionIds[0]) ?? null;
     const data = {
       name: s.name,
@@ -64,14 +66,23 @@ export async function detectAndPersistRecurring(userId: string, opts: { today?: 
 
     if (s.direction === "OUTFLOW" && isSubscription) {
       if (await ensureSubscription(userId, rec.id, s, merchantId)) stats.subscriptionsCreated++;
-    } else if (s.direction === "OUTFLOW" && cat?.systemKey && BILL_CATEGORY_KEYS.has(cat.systemKey)) {
+    } else if (s.direction === "OUTFLOW" && isBillCategory) {
       if (await ensureBill(userId, rec.id, s)) stats.billsCreated++;
-    } else if (s.direction === "INFLOW" && cat?.kind === "INCOME" && ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY"].includes(s.frequency)) {
+    } else if (s.direction === "INFLOW" && cat?.kind === "INCOME" && isPaycheque(s)) {
       await upsertIncomeSource(userId, s, today);
       stats.incomeSources++;
     }
   }
   return stats;
+}
+
+/** Payday detection: regular pay-like inflows, not interest, cashback or refunds. */
+function isPaycheque(s: DetectedSeries) {
+  return (
+    ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY"].includes(s.frequency) &&
+    s.averageAmountCents >= 20_000 &&
+    !/interest|interet|dividend|cashback|refund|rembours|reward/i.test(`${s.seriesKey} ${s.name}`)
+  );
 }
 
 async function ensureSubscription(userId: string, recurringId: string, s: DetectedSeries, merchantId: string | null) {
