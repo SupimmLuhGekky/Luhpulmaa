@@ -117,7 +117,7 @@ function SourceForm({ onOpenChange, source, accounts }: { onOpenChange: (open: b
         <FormError message={error} />
         {source?.matchPattern ? (
           <Notice tone="info" title="Linked to your deposits">
-            Each new paycheque from {source.name} updates the usual amount, the next payday and the account, so changes to those here may be replaced after your next deposit.
+            Harbour notes each paycheque from {source.name} as it arrives. Once you save here, the amount, payday and account you set are kept.
           </Notice>
         ) : null}
         <Field label="Name" error={errors.name?.message} required>

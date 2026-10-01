@@ -3,7 +3,7 @@
  * page and the paydays used by the forecast always agree.
  */
 import type { Frequency } from "@prisma/client";
-import { addDays, type LocalDate } from "@/lib/dates";
+import { addDays, daysBetween, type LocalDate } from "@/lib/dates";
 import { occurrencesBetween } from "@/lib/dates/schedule";
 import type { Cents } from "@/lib/finance/money";
 
@@ -24,16 +24,25 @@ export interface ExpectedPayday {
   sourceId: string;
 }
 
+/** A paycheque that arrives up to this many days early still counts for its expected date. */
+export const EARLY_PAY_DAYS = 3;
+
 /**
  * Expected paydays in [from, to]. The schedule is anchored on the next expected date
- * (which the user may have corrected by hand) and falls back to the last payday; the
- * last payday itself is never repeated as an upcoming one.
+ * (which the user may have corrected by hand) and falls back to the last payday. The
+ * last payday is never repeated as an upcoming one, and neither is an expected date
+ * that a paycheque already covered by arriving a few days early.
  */
 export function paydaysBetween(source: PayScheduleSource, from: LocalDate, to: LocalDate): ExpectedPayday[] {
   const anchor = source.nextExpectedDate ?? source.lastPaidDate;
   if (!anchor || to < from) return [];
+  const last = source.lastPaidDate;
   return occurrencesBetween(anchor, source.frequency, from, to, { semiMonthlyDays: source.semiMonthlyDays })
-    .filter((d) => d !== source.lastPaidDate)
+    .filter((d) => {
+      if (!last) return true;
+      const gap = daysBetween(last, d);
+      return gap < 0 || gap > EARLY_PAY_DAYS;
+    })
     .map((date) => ({ date, amount: source.averageAmountCents, name: source.name, sourceId: source.id }));
 }
 

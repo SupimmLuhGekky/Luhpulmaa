@@ -251,11 +251,11 @@ export interface SafeToSpendResult {
  */
 export function calculateSafeToSpend(input: SafeToSpendInput): SafeToSpendResult {
   const lines: SafeToSpendLine[] = [
-    { key: "availableCash", label: "Available cash", amount: input.availableCash, sign: 1 },
-    { key: "upcomingBills", label: "Upcoming bills before payday", amount: input.upcomingBills, sign: -1 },
-    { key: "reservedBudget", label: "Reserved for budgeted essentials", amount: input.reservedBudget, sign: -1 },
-    { key: "plannedSavings", label: "Planned goal contributions", amount: input.plannedSavings, sign: -1 },
-    { key: "minimumBuffer", label: "Minimum cash buffer", amount: input.minimumBuffer, sign: -1 },
+    { key: "availableCash", label: "Cash available now", amount: input.availableCash, sign: 1 },
+    { key: "upcomingBills", label: "Bills and subscriptions before payday", amount: input.upcomingBills, sign: -1 },
+    { key: "reservedBudget", label: "Set aside for budgeted essentials", amount: input.reservedBudget, sign: -1 },
+    { key: "plannedSavings", label: "Planned savings before payday", amount: input.plannedSavings, sign: -1 },
+    { key: "minimumBuffer", label: "Your cash buffer", amount: input.minimumBuffer, sign: -1 },
   ];
   const raw = lines.reduce((acc, l) => acc + l.sign * l.amount, 0);
   return { safeToSpend: Math.max(0, raw), raw, shortfall: raw < 0 ? -raw : 0, lines };
