@@ -26,7 +26,8 @@ async function connectionTransactions(connId: string) {
   const rows = await prisma.transaction.findMany({
     where: { userId, account: { connectionId: connId } },
     include: { account: { select: { providerAccountId: true } } },
-    orderBy: [{ date: "asc" }, { providerTransactionId: "asc" }],
+    // Provider ids repeat across a connection's accounts, so the row id breaks ties.
+    orderBy: [{ date: "asc" }, { providerTransactionId: "asc" }, { id: "asc" }],
   });
   return rows.map((t) => ({ ...t, key: `${t.account.providerAccountId}|${t.providerTransactionId}` }));
 }
@@ -131,7 +132,7 @@ describe("disconnecting and reconnecting", () => {
 
     const after = await bankRows();
     // The last sync was on Oct 4, so the bank is re-read from Sep 24: older history is untouched…
-    const olderIds = (rows: typeof after) => rows.filter((t) => t.date < new Date("2026-09-24")).map((t) => t.id);
+    const olderIds = (rows: typeof after) => rows.filter((t) => t.date < new Date("2026-09-24")).map((t) => t.id).sort();
     expect(olderIds(after)).toEqual(olderIds(before));
     // …and the re-read window holds exactly what the bank reports for it, once each.
     const window = await providerTransactions(connectionId, "2026-09-24", "2026-10-06");
