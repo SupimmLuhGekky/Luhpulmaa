@@ -50,9 +50,12 @@ Dock from Safari, and ships as a self-contained Mac desktop app that keeps your 
   spending, a cash flow forecast, and net worth over time.
 - **Notifications** in the app and by email, with per-type preferences.
 - **Search** across transactions, merchants, accounts and pages (Cmd+K).
-- **Settings**: profile, currency, locale and time zone, security (password, signed-in devices,
-  activity), notifications, categories and rules, connected banks, data export (CSV and ZIP) and
-  account deletion.
+- **Settings**: profile and province, security (password, signed-in devices, activity), bank
+  connections, categories and merchant rules, budget defaults (alert thresholds, rollover,
+  whether savings count in safe to spend), how goal contributions are recorded, currency and
+  formatting, notifications (including the large-purchase amount and how early bill reminders
+  come), automations, appearance (theme, rounded dashboard figures), and data and privacy (CSV
+  or ZIP export, AI features, account deletion).
 - **Onboarding** that walks a new user through their profile, accounts, income, budget, goals and
   notifications, and a **demo mode** with realistic simulated data.
 - **AI assistant and AI categorisation**, both off by default behind feature flags.
@@ -171,8 +174,13 @@ DATABASE_URL="postgresql://budget:budget@localhost:5432/budget_test" npm run tes
 npm run test:e2e            # Playwright: starts the app against a test database
 ```
 
-The end-to-end suite covers signing up, signing in, connecting the simulated bank, the dashboard,
-creating a budget and a goal, editing a transaction, and creating an automation.
+The end-to-end suite covers signing up, signing in, the nine onboarding steps, connecting the
+simulated bank, the dashboard, importing a CSV file, creating a budget and a goal, editing a
+transaction, and building an automation and checking what it does to new transactions.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, type checks, the unit tests and a
+production build, then the integration tests against a PostgreSQL service and the end-to-end
+suite in Chromium, on every push and pull request.
 
 ## Deploying to Vercel
 
@@ -193,7 +201,9 @@ creating a budget and a goal, editing a transaction, and creating an automation.
 ## Mac desktop app and iPhone
 
 **Mac:** the desktop app bundles the server and its own PostgreSQL database, so it runs entirely on
-your Mac with no hosting. Build, install and update steps are in [docs/DESKTOP.md](docs/DESKTOP.md).
+your Mac with no hosting. Download the newest `Harbour-<version>-arm64.dmg` (Apple silicon) or
+`-x64.dmg` (Intel) from the [releases page](https://github.com/SupimmLuhGekky/Luhpulmaa/releases).
+Install, update and build steps are in [docs/DESKTOP.md](docs/DESKTOP.md).
 
 **iPhone and iPad:** open a deployed Harbour site in Safari, tap Share, then **Add to Home Screen**.
 It opens full screen like an app. This needs the web app deployed somewhere reachable over HTTPS;
@@ -209,7 +219,8 @@ app/                    Next.js App Router
   (auth)/               sign in, sign up, password reset, email verification
   (app)/                signed-in app: dashboard, accounts, transactions, budget, goals, income,
                         bills, subscriptions, automations, analytics, forecast, net worth,
-                        notifications, settings, onboarding
+                        notifications, settings, assistant
+  onboarding/           the nine setup steps after sign-up
   actions/              server actions (forms and buttons)
   api/                  JSON API (transactions, import, search, cron, health, ...)
   legal/                terms and privacy

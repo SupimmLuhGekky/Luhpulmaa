@@ -178,6 +178,8 @@ none of them can change data or move money.
 - `tests/unit`: pure logic (money, dates, categorisation, duplicate detection, CSV parsing,
   forecasting, providers' parsing) with Vitest.
 - `tests/integration`: services against a real PostgreSQL database.
-- `tests/e2e`: Playwright flows through the browser.
+- `tests/e2e`: Playwright flows through the browser, against a dev server and a throwaway
+  `*_e2e` database.
 
-See the README for commands.
+All three run in GitHub Actions on every push and pull request (`.github/workflows/ci.yml`). See
+the README for commands.
