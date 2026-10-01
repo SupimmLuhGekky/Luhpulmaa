@@ -200,6 +200,11 @@ jobs:
           node ../desktop/scripts/release-notes.mjs "$version" > ../release-notes.md
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            # A release started on GitHub's website (which creates the tag): add the install
+            # notes, unless whoever created it already wrote some.
+            if [ -z "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)" ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "Harbour $version for Mac" --notes-file ../release-notes.md
+            fi
           else
             prerelease=()
             case "$version" in *-*) prerelease=(--prerelease) ;; esac

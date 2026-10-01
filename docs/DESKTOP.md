@@ -259,7 +259,10 @@ origin checks) apply unchanged on the desktop.
 ## Releasing a new version
 
 1. Set the new version in `desktop/package.json` (`"version": "0.2.0"`) and commit.
-2. Tag the commit `desktop-v0.2.0` and push the tag.
+2. Tag the commit `desktop-v0.2.0` and push the tag. Or, on GitHub's website, open
+   **Releases → Draft a new release**, type `desktop-v0.2.0` as a new tag on `main`, and click
+   **Publish release**: creating the tag starts the same build, which attaches the DMGs and,
+   if you left the description empty, the install notes.
 
 The **Desktop app** workflow (`.github/workflows/desktop.yml`) builds both DMGs on GitHub's
 macOS runners (Apple silicon on `macos-15`, Intel on `macos-15-intel`), signs them ad hoc,
