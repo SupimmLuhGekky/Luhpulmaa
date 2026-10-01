@@ -144,7 +144,7 @@ export async function cashFlowForecast(userId: string, days: 7 | 30 | 60 | 90) {
   return {
     ...flow,
     today,
-    days,
+    horizonDays: days,
     dailyDiscretionary,
     minimumBuffer: toCents(user.minCashBufferCents),
     belowBuffer: flow.days.filter((d) => d.balance < toCents(user.minCashBufferCents)).map((d) => d.date),
