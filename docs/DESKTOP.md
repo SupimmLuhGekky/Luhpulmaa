@@ -18,8 +18,8 @@ same app you would get on the web, served by Harbour itself at `http://127.0.0.1
 
 ## Install
 
-You need macOS 13 Ventura or later, on Apple silicon or Intel, and about 600 MB of disk
-space for the app plus room for your data.
+You need macOS 13 Ventura or later, on Apple silicon or Intel. The download is about
+140 MB; the installed app takes about 430 MB, plus room for your data.
 
 1. Open the [releases page](https://github.com/SupimmLuhGekky/Luhpulmaa/releases) and pick the
    newest **Harbour … for Mac** release (tags start with `desktop-v`). Download the DMG for
@@ -185,7 +185,7 @@ npm run desktop:install   # the Mac app's own dependencies (desktop/package.json
 npm run desktop:build     # Next.js standalone build + PostgreSQL + Electron app
 npm run desktop:sign      # ad-hoc code signing, inside-out, then verification
 npm run desktop:dmg       # desktop/out/Harbour-<version>-<arch>.dmg
-npm run desktop:smoke     # optional: launches the built app, checks it, screenshots, quits
+npm run desktop:smoke     # optional: starts the built app, checks it, takes screenshots, quits
 ```
 
 The app is at `desktop/out/package/Harbour-darwin-<arch>/Harbour.app`. Other scripts:

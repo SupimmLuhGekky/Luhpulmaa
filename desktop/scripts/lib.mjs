@@ -101,6 +101,39 @@ export function formatBytes(/** @type {number} */ bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const CPU_TYPES = /** @type {Record<number, "x64" | "arm64">} */ ({ 0x01000007: "x64", 0x0100000c: "arm64" });
+const ELF_MACHINES = /** @type {Record<number, "x64" | "arm64">} */ ({ 0x3e: "x64", 0xb7: "arm64" });
+
+/**
+ * Architectures of a native binary (Mach-O, universal Mach-O or ELF), or null when the
+ * file is not one. Unknown CPU types are reported by number.
+ * @param {string} file
+ * @returns {string[] | null}
+ */
+export function binaryArchs(file) {
+  const buf = Buffer.alloc(4096);
+  const fd = fs.openSync(file, "r");
+  let length;
+  try {
+    length = fs.readSync(fd, buf, 0, buf.length, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (length < 20) return null;
+  const name = (/** @type {Record<number, string>} */ table, /** @type {number} */ value) => table[value] ?? `0x${value.toString(16)}`;
+  const magicBE = buf.readUInt32BE(0);
+  if (magicBE === 0xcafebabe) {
+    const count = buf.readUInt32BE(4);
+    // Java class files share this magic; their "count" is a version number far above any real slice count.
+    if (count === 0 || count > 30 || 8 + count * 20 > length) return null;
+    return Array.from({ length: count }, (_, i) => name(CPU_TYPES, buf.readUInt32BE(8 + i * 20)));
+  }
+  const magicLE = buf.readUInt32LE(0);
+  if (magicLE === 0xfeedfacf || magicLE === 0xfeedface) return [name(CPU_TYPES, buf.readUInt32LE(4))];
+  if (magicBE === 0x7f454c46) return [name(ELF_MACHINES, buf[5] === 2 ? buf.readUInt16BE(18) : buf.readUInt16LE(18))];
+  return null;
+}
+
 /** Finds files whose name starts with ".env" (never allowed in the bundle). */
 export function findEnvFiles(/** @type {string} */ dir) {
   const found = [];

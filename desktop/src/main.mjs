@@ -374,7 +374,11 @@ function run() {
       fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
       fs.writeFileSync(screenshotPath, image.toPNG());
       const { width, height } = image.getSize();
-      log.info(`Smoke test: sign-in page loaded (${page}), health ok, screenshot ${width}x${height} saved.`);
+      const colours = sampledColours(image);
+      const heading = await pageHeading(win);
+      log.info(`Smoke test: sign-in page loaded (${page}, heading "${heading}"), health ok, screenshot ${width}x${height} saved (${colours} colours sampled).`);
+      say(`[smoke] sign-in page: heading "${heading}", screenshot ${width}x${height}, ${colours} colours sampled`);
+      if (colours <= 2) throw new Error("the window screenshot is blank");
       // Informational end-to-end check (never fails the test): demo sign-in exercises the
       // database, a server action's origin check and the Secure session cookie on 127.0.0.1.
       const demo = await tryDemoSignIn(win, screenshotPath);
@@ -421,7 +425,10 @@ function run() {
           const image = await win.webContents.capturePage();
           const file = screenshotPath.replace(/\.png$/i, "") + "-signed-in.png";
           if (!image.isEmpty()) fs.writeFileSync(file, image.toPNG());
-          return `ok (session cookie secure=${cookie.secure}, httpOnly=${cookie.httpOnly}, sameSite=${cookie.sameSite}; window at ${at})`;
+          return (
+            `ok (session cookie secure=${cookie.secure}, httpOnly=${cookie.httpOnly}, sameSite=${cookie.sameSite}; ` +
+            `window at ${at}, heading "${await pageHeading(win)}", ${sampledColours(image)} colours sampled)`
+          );
         }
         await sleep(500);
       }
@@ -457,6 +464,34 @@ function run() {
 /** The .app bundle this process runs from (macOS), for instructions shown to the user. */
 function appBundlePath() {
   return process.platform === "darwin" ? path.resolve(process.execPath, "..", "..", "..") : path.dirname(process.execPath);
+}
+
+/**
+ * Number of distinct colours in a 40×40 grid of pixels from a screenshot; a blank or
+ * unpainted window has one or two.
+ * @param {Electron.NativeImage} image
+ */
+function sampledColours(image) {
+  const { width, height } = image.getSize();
+  const bitmap = image.toBitmap();
+  const colours = new Set();
+  const stepX = Math.max(1, Math.floor(width / 40));
+  const stepY = Math.max(1, Math.floor(height / 40));
+  for (let y = 0; y < height; y += stepY) {
+    for (let x = 0; x < width; x += stepX) {
+      const i = (y * width + x) * 4;
+      if (i + 4 <= bitmap.length) colours.add(bitmap.readUInt32LE(i));
+    }
+  }
+  return colours.size;
+}
+
+/** The page's main heading, for smoke-test logs (demo data only, never personal data). */
+async function pageHeading(/** @type {import("electron").BrowserWindow} */ win) {
+  const text = await win.webContents
+    .executeJavaScript(`(document.querySelector("h1") || document.querySelector("h2"))?.textContent ?? ""`)
+    .catch(() => "");
+  return String(text).replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
 /** Path and query of a URL, for logs. */
