@@ -6,7 +6,7 @@ import { calculateNetWorth, type NetWorthResult } from "@/lib/finance/calculatio
 import { toCents } from "@/lib/finance/money";
 import { convertToBase } from "@/lib/finance/fx";
 import { isLiability, netWorthGroup } from "@/lib/accounts/types";
-import { accountContributions, netWorthRangeStart, type AccountBalanceInput, type NetWorthRange } from "./contributions";
+import { accountContributions, netWorthRangeStart, rebuildNetWorthHistory, type AccountBalanceInput, type BalancePoint, type NetWorthRange } from "./contributions";
 
 /** Current net worth from visible, active accounts marked "include in net worth". */
 export async function currentNetWorth(userId: string): Promise<NetWorthResult & { accountCount: number }> {
@@ -36,15 +36,76 @@ export async function recordNetWorthSnapshot(userId: string, date: LocalDate) {
   return nw;
 }
 
-export async function netWorthHistory(userId: string, from: LocalDate, to: LocalDate) {
-  const rows = await prisma.netWorthSnapshot.findMany({ where: { userId, date: { gte: toDbDate(from), lte: toDbDate(to) } }, orderBy: { date: "asc" } });
-  return rows.map((r) => ({ date: fromDbDate(r.date), assets: toCents(r.assetsCents), liabilities: toCents(r.liabilitiesCents), netWorth: toCents(r.netWorthCents) }));
+/**
+ * Converts many amounts with one rate lookup per currency, with the same exact
+ * arithmetic and rounding as convertToBase (the rate is read back as rate × 10^8).
+ */
+async function baseConverter(userId: string, currencies: string[], base: string) {
+  const SCALE = 100_000_000n;
+  const factors = new Map<string, bigint>();
+  await Promise.all([...new Set(currencies)].map(async (c) => factors.set(c, BigInt(await convertToBase(userId, Number(SCALE), c, base)))));
+  return (amount: number, currency: string): number => {
+    const factor = factors.get(currency) ?? SCALE;
+    if (factor === SCALE) return amount;
+    const product = BigInt(amount) * factor;
+    const q = product / SCALE;
+    const r = product % SCALE;
+    const abs = r < 0n ? -r : r;
+    return Number(abs * 2n >= SCALE ? (product < 0n ? q - 1n : q + 1n) : q);
+  };
 }
 
-/** Net worth at the latest snapshot on or before `date` (null when no history). */
+/**
+ * Daily net worth for [from, to], rebuilt from the balance history of the accounts
+ * that count toward net worth now (see rebuildNetWorthHistory), so it always agrees
+ * with today's figure and with the per-account breakdown, also after an account is
+ * left out of net worth. Also returns each account's balance on the first day.
+ */
+async function includedHistory(userId: string, from: LocalDate, to: LocalDate) {
+  const [accounts, user] = await Promise.all([
+    prisma.account.findMany({ where: { userId, includeInNetWorth: true }, select: { id: true, type: true, currency: true, status: true, currentBalanceCents: true } }),
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { currency: true, timeZone: true } }),
+  ]);
+  if (!accounts.length) return rebuildNetWorthHistory([], [], from, to);
+  const ids = accounts.map((a) => a.id);
+  const [seed, inRange, convert] = await Promise.all([
+    // Each account's latest balance before the range seeds the first day.
+    prisma.$queryRaw<{ accountId: string; date: Date; balanceCents: bigint }[]>`
+      SELECT DISTINCT ON ("accountId") "accountId", "date", "balanceCents"
+      FROM "account_balance_snapshots"
+      WHERE "userId" = ${userId}::uuid AND "accountId" = ANY(${ids}::uuid[]) AND "date" < ${toDbDate(from)}
+      ORDER BY "accountId", "date" DESC`,
+    prisma.accountBalanceSnapshot.findMany({ where: { userId, accountId: { in: ids }, date: { gte: toDbDate(from), lte: toDbDate(to) } }, select: { accountId: true, date: true, balanceCents: true } }),
+    baseConverter(
+      userId,
+      accounts.map((a) => a.currency),
+      user.currency,
+    ),
+  ]);
+  const currencyOf = new Map(accounts.map((a) => [a.id, a.currency]));
+  const points: BalancePoint[] = [...seed, ...inRange].map((r) => ({ accountId: r.accountId, date: fromDbDate(r.date), balance: convert(toCents(r.balanceCents), currencyOf.get(r.accountId)!) }));
+  // Today's balance closes each open account's series; an account without any recorded
+  // balance yet counts at today's balance (like the history backfill does).
+  const today = todayIn(user.timeZone);
+  for (const a of accounts) {
+    if (a.status !== "CLOSED") points.push({ accountId: a.id, date: today, balance: convert(toCents(a.currentBalanceCents), a.currency) });
+  }
+  return rebuildNetWorthHistory(
+    accounts.map((a) => ({ id: a.id, side: isLiability(a.type) ? "liability" : "asset", closed: a.status === "CLOSED" })),
+    points,
+    from,
+    to,
+  );
+}
+
+export async function netWorthHistory(userId: string, from: LocalDate, to: LocalDate) {
+  return (await includedHistory(userId, from, to)).history;
+}
+
+/** Net worth on `date` (null when there is no balance history by then). */
 async function netWorthAt(userId: string, date: LocalDate): Promise<number | null> {
-  const row = await prisma.netWorthSnapshot.findFirst({ where: { userId, date: { lte: toDbDate(date) } }, orderBy: { date: "desc" } });
-  return row ? toCents(row.netWorthCents) : null;
+  const { history } = await includedHistory(userId, date, date);
+  return history.length ? history[0].netWorth : null;
 }
 
 export async function netWorthSummary(userId: string, today: LocalDate) {
@@ -62,23 +123,14 @@ export async function netWorthSummary(userId: string, today: LocalDate) {
   };
 }
 
-/** Each account's balance on `date`: its latest snapshot on or before that day. */
-async function balancesOn(userId: string, date: LocalDate): Promise<Map<string, number>> {
-  const rows = await prisma.$queryRaw<{ accountId: string; balanceCents: bigint }[]>`
-    SELECT DISTINCT ON ("accountId") "accountId", "balanceCents"
-    FROM "account_balance_snapshots"
-    WHERE "userId" = ${userId}::uuid AND "date" <= ${toDbDate(date)}
-    ORDER BY "accountId", "date" DESC`;
-  return new Map(rows.map((r) => [r.accountId, toCents(r.balanceCents)]));
-}
-
 /**
  * Per-account contribution to net worth (same accounts and conversion as
- * currentNetWorth), with each account's change since `since` from its balance
- * history. Accounts left out of net worth are listed separately.
+ * currentNetWorth), with each account's change from its balance at the start of the
+ * history shown (`start`, already in the user's currency; null without history).
+ * Accounts left out of net worth are listed separately.
  */
-export async function netWorthAccounts(userId: string, since: LocalDate | null) {
-  const [accounts, user, start] = await Promise.all([
+export async function netWorthAccounts(userId: string, start: Map<string, number> | null) {
+  const [accounts, user] = await Promise.all([
     prisma.account.findMany({
       where: { userId, status: { not: "CLOSED" } },
       select: {
@@ -96,11 +148,10 @@ export async function netWorthAccounts(userId: string, since: LocalDate | null) 
       orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
     }),
     prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { currency: true } }),
-    since ? balancesOn(userId, since) : Promise.resolve(new Map<string, number>()),
   ]);
   const rows: AccountBalanceInput[] = await Promise.all(
     accounts.map(async (a) => {
-      const startRaw = start.get(a.id);
+      const startBalance = start?.get(a.id);
       return {
         id: a.id,
         name: a.name,
@@ -108,7 +159,7 @@ export async function netWorthAccounts(userId: string, since: LocalDate | null) 
         group: netWorthGroup(a.type),
         side: isLiability(a.type) ? ("liability" as const) : ("asset" as const),
         balance: await convertToBase(userId, toCents(a.currentBalanceCents), a.currency, user.currency),
-        startBalance: startRaw === undefined ? null : await convertToBase(userId, startRaw, a.currency, user.currency),
+        startBalance: startBalance === undefined ? null : startBalance,
         included: a.includeInNetWorth,
         institution: a.institution?.name ?? null,
         isManual: a.isManual,
@@ -130,12 +181,12 @@ export async function netWorthOverview(userId: string, range: NetWorthRange) {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
   const today = todayIn(user.timeZone);
   const from = netWorthRangeStart(range, today);
-  const [summary, stored] = await Promise.all([netWorthSummary(userId, today), netWorthHistory(userId, from ?? "1900-01-01", today)]);
-  const history = stored.filter((p) => p.date < today);
+  const [summary, rebuilt] = await Promise.all([netWorthSummary(userId, today), includedHistory(userId, from ?? "1900-01-01", today)]);
+  const history = rebuilt.history.filter((p) => p.date < today);
   history.push({ date: today, assets: summary.assets, liabilities: summary.liabilities, netWorth: summary.netWorth });
   const first = history[0];
   const hasHistory = history.length > 1;
-  const accounts = await netWorthAccounts(userId, hasHistory ? first.date : null);
+  const accounts = await netWorthAccounts(userId, hasHistory ? rebuilt.startBalances : null);
   return {
     today,
     range,

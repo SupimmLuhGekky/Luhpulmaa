@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { accountContributions, netWorthRangeStart, parseNetWorthRange, type AccountBalanceInput } from "@/lib/networth/contributions";
+import {
+  accountContributions,
+  netWorthRangeStart,
+  parseNetWorthRange,
+  rebuildNetWorthHistory,
+  type AccountBalanceInput,
+  type BalancePoint,
+  type HistoryAccount,
+} from "@/lib/networth/contributions";
 
 const base = { institution: null, isManual: false, isSimulated: false, isHidden: false, included: true };
 const rows: AccountBalanceInput[] = [
@@ -59,5 +67,54 @@ describe("net worth ranges", () => {
     expect(parseNetWorthRange("1y")).toBe("1y");
     expect(parseNetWorthRange("5y")).toBe("6m");
     expect(parseNetWorthRange(undefined, "all")).toBe("all");
+  });
+});
+
+describe("rebuildNetWorthHistory", () => {
+  const accounts: HistoryAccount[] = [
+    { id: "chq", side: "asset", closed: false },
+    { id: "visa", side: "liability", closed: false },
+    { id: "rrsp", side: "asset", closed: false },
+    { id: "old", side: "asset", closed: true },
+  ];
+  // Deliberately out of order; "gone" belongs to an account that no longer counts.
+  const points: BalancePoint[] = [
+    { accountId: "rrsp", date: "2026-09-03", balance: 5_000 },
+    { accountId: "chq", date: "2026-09-02", balance: 1_500 },
+    { accountId: "old", date: "2026-09-02", balance: 100 },
+    { accountId: "chq", date: "2026-08-28", balance: 1_000 },
+    { accountId: "visa", date: "2026-09-01", balance: 200 },
+    { accountId: "old", date: "2026-08-30", balance: 300 },
+    { accountId: "gone", date: "2026-08-01", balance: 999_999 },
+  ];
+
+  it("carries each balance forward, backfills later accounts and drops closed ones after their last balance", () => {
+    const { history } = rebuildNetWorthHistory(accounts, points, "2026-09-01", "2026-09-04");
+    expect(history).toEqual([
+      // chq seeded from before the range, rrsp backfilled at its first balance, old still open
+      { date: "2026-09-01", assets: 6_300, liabilities: 200, netWorth: 6_100 },
+      { date: "2026-09-02", assets: 6_600, liabilities: 200, netWorth: 6_400 },
+      // old was closed after its last balance on Sep 2
+      { date: "2026-09-03", assets: 6_500, liabilities: 200, netWorth: 6_300 },
+      { date: "2026-09-04", assets: 6_500, liabilities: 200, netWorth: 6_300 },
+    ]);
+  });
+
+  it("returns each account's balance on the first day", () => {
+    const { startBalances } = rebuildNetWorthHistory(accounts, points, "2026-09-01", "2026-09-04");
+    expect(Object.fromEntries(startBalances)).toEqual({ chq: 1_000, visa: 200, rrsp: 5_000, old: 300 });
+  });
+
+  it("starts on the first known balance when the range starts earlier", () => {
+    const { history } = rebuildNetWorthHistory(accounts, points, "2026-08-01", "2026-08-29");
+    expect(history.map((p) => p.date)).toEqual(["2026-08-28", "2026-08-29"]);
+    expect(history[0]).toEqual({ date: "2026-08-28", assets: 6_300, liabilities: 200, netWorth: 6_100 });
+  });
+
+  it("is empty without balances, accounts or days", () => {
+    expect(rebuildNetWorthHistory([], points, "2026-09-01", "2026-09-04").history).toEqual([]);
+    expect(rebuildNetWorthHistory(accounts, [], "2026-09-01", "2026-09-04").history).toEqual([]);
+    expect(rebuildNetWorthHistory(accounts, points, "2026-09-04", "2026-09-01").history).toEqual([]);
+    expect(rebuildNetWorthHistory(accounts, points, "2026-08-01", "2026-08-15").history).toEqual([]);
   });
 });

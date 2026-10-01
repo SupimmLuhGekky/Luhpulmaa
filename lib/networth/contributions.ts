@@ -1,7 +1,7 @@
 /**
  * Net-worth breakdown helpers (pure: safe for unit tests and client components).
  */
-import { addMonths, startOfYear, type LocalDate } from "@/lib/dates";
+import { addDays, addMonths, startOfYear, type LocalDate } from "@/lib/dates";
 import { ratioBps, type Bps, type Cents } from "@/lib/finance/money";
 
 export const NET_WORTH_RANGES = ["1m", "3m", "6m", "ytd", "1y", "all"] as const;
@@ -106,3 +106,75 @@ export function accountContributions(rows: AccountBalanceInput[]) {
 }
 
 export type NetWorthAccounts = ReturnType<typeof accountContributions>;
+
+export interface HistoryAccount {
+  id: string;
+  side: "asset" | "liability";
+  /** A closed account counts until its last recorded balance, then drops out. */
+  closed: boolean;
+}
+
+export interface BalancePoint {
+  accountId: string;
+  date: LocalDate;
+  /** In the user's currency; debts as the amount owed. */
+  balance: Cents;
+}
+
+export interface NetWorthHistoryPoint {
+  date: LocalDate;
+  assets: Cents;
+  liabilities: Cents;
+  netWorth: Cents;
+}
+
+/**
+ * Daily assets, debts and net worth rebuilt from each account's balance history:
+ * every day uses each account's latest balance on or before it. Only the accounts
+ * given (those that count toward net worth now) are summed, so the history always
+ * matches today's definition, e.g. after an account is left out of net worth.
+ *
+ * - The history starts on the first day any account has a known balance.
+ * - An account added later counts at its first known balance on earlier days (the
+ *   same assumption as the history backfill), so adding a loan or an investment
+ *   account doesn't show up as a sudden change in net worth.
+ * - A closed account counts until its last known balance.
+ * `points` may include balances before `from` (they seed the first day).
+ * Also returns each account's balance on the first day, for per-account changes.
+ */
+export function rebuildNetWorthHistory(
+  accounts: HistoryAccount[],
+  points: BalancePoint[],
+  from: LocalDate,
+  to: LocalDate,
+): { history: NetWorthHistoryPoint[]; startBalances: Map<string, Cents> } {
+  const byAccount = new Map<string, BalancePoint[]>();
+  for (const p of [...points].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))) {
+    const list = byAccount.get(p.accountId);
+    if (list) list.push(p);
+    else byAccount.set(p.accountId, [p]);
+  }
+  const tracked = accounts.filter((a) => byAccount.has(a.id));
+  const startBalances = new Map<string, Cents>();
+  if (!tracked.length || to < from) return { history: [], startBalances };
+  const firstKnown = tracked.map((a) => byAccount.get(a.id)![0].date).sort()[0];
+  const history: NetWorthHistoryPoint[] = [];
+  const cursor = new Map<string, number>(tracked.map((a) => [a.id, -1]));
+  for (let d = firstKnown > from ? firstKnown : from; d <= to; d = addDays(d, 1)) {
+    let assets = 0;
+    let liabilities = 0;
+    for (const a of tracked) {
+      const list = byAccount.get(a.id)!;
+      let i = cursor.get(a.id)!;
+      while (i + 1 < list.length && list[i + 1].date <= d) i++;
+      cursor.set(a.id, i);
+      if (a.closed && d > list[list.length - 1].date) continue;
+      const balance = list[Math.max(i, 0)].balance;
+      if (!history.length) startBalances.set(a.id, balance);
+      if (a.side === "asset") assets += balance;
+      else liabilities += balance;
+    }
+    history.push({ date: d, assets, liabilities, netWorth: assets - liabilities });
+  }
+  return { history, startBalances };
+}
