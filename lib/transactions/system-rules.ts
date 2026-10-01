@@ -136,6 +136,8 @@ export const SYSTEM_RULES: SystemRule[] = [
   { pattern: "winners", categoryKey: "shopping", subcategory: "Clothing" },
   { pattern: "uniqlo", categoryKey: "shopping", subcategory: "Clothing" },
   { pattern: "hm", categoryKey: "shopping", subcategory: "Clothing" },
+  // Merchant keys keep "&" ("A&W", "H&M"), so "hm" alone never matches card descriptions like "H&M #1234".
+  { pattern: "h&m", categoryKey: "shopping", subcategory: "Clothing" },
   { pattern: "dollarama", categoryKey: "shopping" },
   { pattern: "sephora", categoryKey: "personal", subcategory: "Personal care" },
   { pattern: "apple store", categoryKey: "shopping", subcategory: "Electronics" },
@@ -216,12 +218,16 @@ export const REFUND_KEYWORDS = ["refund", "return", "remboursement", "reversal",
 function wordPrefixMatch(haystack: string, needle: string): boolean {
   if (!needle) return false;
   if (haystack === needle) return true;
-  const idx = haystack.indexOf(needle);
-  if (idx < 0) return false;
-  const before = idx === 0 || haystack[idx - 1] === " ";
-  const afterIdx = idx + needle.length;
-  const after = afterIdx === haystack.length || haystack[afterIdx] === " " || haystack[afterIdx] === "s";
-  return before && after;
+  const endsWord = (i: number) => i === haystack.length || haystack[i] === " ";
+  // Check every occurrence: in "bellmedia bell canada" the first "bell" is inside a longer word.
+  for (let idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + 1)) {
+    const before = idx === 0 || haystack[idx - 1] === " ";
+    const afterIdx = idx + needle.length;
+    // A plural "s" may follow ("bars"), but only if it ends the word ("hmshost" is not "hm").
+    const after = endsWord(afterIdx) || (haystack[afterIdx] === "s" && endsWord(afterIdx + 1));
+    if (before && after) return true;
+  }
+  return false;
 }
 
 /** Returns the most specific (longest-pattern) system rule matching the normalised text. */

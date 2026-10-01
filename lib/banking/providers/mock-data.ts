@@ -112,8 +112,11 @@ function pickDiscretionary(rand: () => number): Discretionary {
   return DISCRETIONARY[0];
 }
 
+/** A Friday. Paydays fall every 14 days from here (or a week later, depending on the seed). */
+const PAY_CYCLE_EPOCH: LocalDate = "2020-01-03";
+
 /** Everything that happens on one calendar day except the credit-card payment. */
-function dayTransactions(seed: number, anchor: LocalDate, d: LocalDate): MockTxn[] {
+function dayTransactions(seed: number, d: LocalDate): MockTxn[] {
   const out: MockTxn[] = [];
   const day = Number(d.slice(8, 10));
   const monthRand = prng(hashString(`${seed}:${d.slice(0, 7)}`));
@@ -121,8 +124,9 @@ function dayTransactions(seed: number, anchor: LocalDate, d: LocalDate): MockTxn
     out.push({ id: `mk_${seed.toString(36)}_${d.replace(/-/g, "")}_${accountKey[0]}${n}`, accountKey, date: d, amountCents, description, merchantName });
 
   const payAmount = 184_500 + (seed % 7) * 500;
-  const firstPayday = addDays(anchor, 4);
-  // Biweekly paycheque (Friday cadence from the anchor)
+  // Biweekly Friday paycheque on a cadence fixed per seed, not per connection date, so
+  // linking the same demo bank again later replays the same history instead of shifting it.
+  const firstPayday = addDays(PAY_CYCLE_EPOCH, (seed % 2) * 7);
   const sincePay = daysBetween(firstPayday, d);
   if (sincePay >= 0 && sincePay % 14 === 0) {
     const bonus = prng(hashString(`${seed}:pay:${d}`))() < 0.1 ? 15_000 : 0;
@@ -157,7 +161,7 @@ function dayTransactions(seed: number, anchor: LocalDate, d: LocalDate): MockTxn
 
 /**
  * Generates all simulated transactions for a connection between `start` and `end`.
- * `anchor` is the connection's history start and fixes the biweekly pay cycle.
+ * `anchor` is the connection's history start: nothing is generated before it.
  * Every value is a pure function of (seed, anchor, date), so any window returns the
  * same ids and amounts — which is what makes sync idempotency testable.
  */
@@ -166,13 +170,13 @@ export function generateMockTransactions(seed: number, anchor: LocalDate, start:
   const from = start < anchor ? anchor : start;
   if (end < from) return out;
   for (let d = from; d <= end; d = addDays(d, 1)) {
-    out.push(...dayTransactions(seed, anchor, d));
+    out.push(...dayTransactions(seed, d));
     if (Number(d.slice(8, 10)) === 26) {
       // Pay the card's statement in full: everything charged since the previous payment day.
       const cycleStart = addMonths(d, -1) < anchor ? anchor : addMonths(d, -1);
       let statement = 0;
       for (let c = cycleStart; c < d; c = addDays(c, 1)) {
-        for (const t of dayTransactions(seed, anchor, c)) if (t.accountKey === "credit") statement -= t.amountCents;
+        for (const t of dayTransactions(seed, c)) if (t.accountKey === "credit") statement -= t.amountCents;
       }
       if (statement > 0) {
         const id = (k: string, n: number) => `mk_${seed.toString(36)}_${d.replace(/-/g, "")}_${k}${n}`;

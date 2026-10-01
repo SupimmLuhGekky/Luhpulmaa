@@ -1,5 +1,5 @@
 import "server-only";
-import type { CategorizationSource, Prisma } from "@prisma/client";
+import type { CategorizationSource, Prisma, TransactionType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { addDays, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { toCents } from "@/lib/finance/money";
@@ -43,7 +43,15 @@ export interface IngestResult {
   duplicates: number;
 }
 
-export async function ingestTransactions(userId: string, rows: IngestRow[], opts: { importBatchId?: string; runAutomations?: boolean; notify?: boolean } = {}): Promise<IngestResult> {
+export interface IngestOptions {
+  importBatchId?: string;
+  runAutomations?: boolean;
+  notify?: boolean;
+  /** Existing transaction ids already matched to other rows of the same file, which must not absorb these rows. */
+  claimedIds?: Iterable<string>;
+}
+
+export async function ingestTransactions(userId: string, rows: IngestRow[], opts: IngestOptions = {}): Promise<IngestResult> {
   const result: IngestResult = { created: [], updated: [], duplicates: 0 };
   if (!rows.length) return result;
 
@@ -81,7 +89,7 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
 
   const ctx = await loadCategorizationContext(userId);
   const merchantCache = new Map<string, string>();
-  const claimed = new Set<string>();
+  const claimed = new Set<string>(opts.claimedIds ?? []);
 
   async function merchantIdFor(name: string, defaultCategoryId: string | null): Promise<string | null> {
     const key = normalizeMerchant(name);
@@ -98,7 +106,8 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
   }
 
   for (const row of rows) {
-    const match = findDuplicate(row, existing, claimed);
+    // Manual entries are deliberate (two identical coffees are two coffees), so they skip duplicate matching.
+    const match = row.isManual ? null : findDuplicate(row, existing, claimed);
     if (match) {
       claimed.add(match.existingId);
       const target = existing.find((e) => e.id === match.existingId)!;
@@ -142,8 +151,10 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
         subcategoryId = row.subcategoryId && chosen.subcategories.some((s) => s.id === row.subcategoryId) ? row.subcategoryId : null;
         categorizedBy = "USER";
         label = "Chosen by you";
-        cat = { ...cat, ...(chosen.kind === "TRANSFER" ? { type: "TRANSFER", isTransfer: true } : {}) };
-        if (chosen.kind === "INCOME" && row.amountCents > 0) cat = { ...cat, type: "INCOME", isTransfer: false };
+        // The chosen category decides the type, as when the user edits a transaction ("Virement Interac" filed as Rent is spending).
+        const type: TransactionType =
+          chosen.kind === "TRANSFER" ? "TRANSFER" : chosen.kind === "INCOME" ? (row.amountCents > 0 ? "INCOME" : "EXPENSE") : row.amountCents > 0 ? "REFUND" : "EXPENSE";
+        cat = { ...cat, type, isTransfer: type === "TRANSFER" };
       }
     } else if (!categoryId) {
       const ai = await suggestCategoryWithAI(userId, { description: row.description, merchantName: row.merchantName ?? null, amountCents: row.amountCents }, ctx);

@@ -140,7 +140,9 @@ export function nextOccurrence(
   opts: { semiMonthlyDays?: number[]; endDate?: LocalDate | null } = {},
 ): LocalDate | null {
   if (frequency === "ONE_TIME") return anchor >= onOrAfter ? anchor : null;
-  const horizon = addDays(onOrAfter, 400);
+  // Search a little over a year past the later of the two dates so a schedule that
+  // starts more than a year from now still has its first occurrence found.
+  const horizon = addDays(anchor > onOrAfter ? anchor : onOrAfter, 400);
   const [first] = occurrencesBetween(anchor, frequency, onOrAfter, horizon, { ...opts, limit: 1 });
   return first ?? null;
 }
