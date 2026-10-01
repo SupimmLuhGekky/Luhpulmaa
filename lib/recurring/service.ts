@@ -4,7 +4,7 @@ import { addDays, daysBetween, fromDbDate, todayIn, toDbDate, type LocalDate } f
 import { formatCurrency, toCents } from "@/lib/finance/money";
 import { runSubscriptionDetectedAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
-import { detectRecurring, keepSubscriptionChoice, type DetectedSeries } from "./detect";
+import { detectRecurring, incomeSourceSyncData, keepSubscriptionChoice, type DetectedSeries } from "./detect";
 
 const BILL_CATEGORY_KEYS = new Set(["housing", "utilities", "insurance", "education"]);
 
@@ -144,19 +144,30 @@ async function ensureBill(userId: string, recurringId: string, s: DetectedSeries
 async function upsertIncomeSource(userId: string, s: DetectedSeries, today: LocalDate) {
   const existing = await prisma.incomeSource.findFirst({ where: { userId, matchPattern: s.seriesKey } });
   const lastPaid = existing?.lastPaidDate ? fromDbDate(existing.lastPaidDate) : null;
-  const data = {
-    averageAmountCents: s.averageAmountCents,
-    lastPaidDate: toDbDate(s.lastDate),
-    nextExpectedDate: toDbDate(s.nextExpectedDate),
-    accountId: s.accountId,
-    ...(s.semiMonthlyDays ? { semiMonthlyDays: s.semiMonthlyDays } : {}),
-  };
   if (existing) {
-    // Detected values never overwrite a frequency the user set manually.
-    await prisma.incomeSource.update({ where: { id: existing.id }, data: existing.isDetected ? { ...data, frequency: s.frequency } : data });
+    // A source the user edited keeps their values: only the last payday is recorded.
+    const { lastPaidDate, nextExpectedDate, ...rest } = incomeSourceSyncData(existing, s);
+    await prisma.incomeSource.update({
+      where: { id: existing.id },
+      data: { ...rest, lastPaidDate: toDbDate(lastPaidDate), ...(nextExpectedDate ? { nextExpectedDate: toDbDate(nextExpectedDate) } : {}) },
+    });
   } else {
     const hasPrimary = await prisma.incomeSource.count({ where: { userId, isPrimary: true } });
-    await prisma.incomeSource.create({ data: { userId, name: s.name, matchPattern: s.seriesKey, frequency: s.frequency, isDetected: true, isPrimary: hasPrimary === 0, ...data } });
+    await prisma.incomeSource.create({
+      data: {
+        userId,
+        name: s.name,
+        matchPattern: s.seriesKey,
+        frequency: s.frequency,
+        isDetected: true,
+        isPrimary: hasPrimary === 0,
+        averageAmountCents: s.averageAmountCents,
+        lastPaidDate: toDbDate(s.lastDate),
+        nextExpectedDate: toDbDate(s.nextExpectedDate),
+        accountId: s.accountId,
+        ...(s.semiMonthlyDays ? { semiMonthlyDays: s.semiMonthlyDays } : {}),
+      },
+    });
   }
   if (lastPaid !== s.lastDate && daysBetween(s.lastDate, today) <= 3) {
     await notify(userId, {
