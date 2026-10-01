@@ -30,9 +30,11 @@ type Values = z.infer<typeof schema>;
 export interface ProfileFormProps {
   profile: { firstName: string; lastName: string; email: string; emailVerified: boolean; country: string; province: string | null; isDemo: boolean };
   provinces: { code: string; name: string }[];
+  /** False in the Mac app, which never sends email: no verification prompts there. */
+  sendsEmail: boolean;
 }
 
-export function ProfileForm({ profile, provinces }: ProfileFormProps) {
+export function ProfileForm({ profile, provinces, sendsEmail }: ProfileFormProps) {
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [sending, setSending] = React.useState(false);
@@ -74,7 +76,7 @@ export function ProfileForm({ profile, provinces }: ProfileFormProps) {
       <SettingsSection
         id="profile"
         title="Personal details"
-        description="Your name appears in the app and in emails from Harbour."
+        description={sendsEmail ? "Your name appears in the app and in emails from Harbour." : "Your name appears in the app."}
         footer={
           <>
             {form.formState.isDirty ? (
@@ -102,7 +104,7 @@ export function ProfileForm({ profile, provinces }: ProfileFormProps) {
             <p className="text-[13px] font-medium leading-none text-foreground">Email</p>
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-subtle px-3 py-2">
               <span className="min-w-0 flex-1 truncate text-sm text-foreground">{profile.email}</span>
-              {profile.emailVerified ? (
+              {!sendsEmail ? null : profile.emailVerified ? (
                 <Badge variant="positive">
                   <BadgeCheck aria-hidden /> Verified
                 </Badge>
@@ -115,10 +117,12 @@ export function ProfileForm({ profile, provinces }: ProfileFormProps) {
             <p className="text-xs text-muted-foreground">
               {profile.isDemo
                 ? "The demo account's email can't be changed."
-                : profile.emailVerified
-                  ? "To use a different email address, contact support. Email changes need re-verification."
-                  : "Verify your email so we can reach you about security and sync problems."}
-              {!profile.emailVerified && !profile.isDemo ? (
+                : !sendsEmail
+                  ? "You sign in with this address. The Mac app keeps everything on this computer and never sends email."
+                  : profile.emailVerified
+                    ? "To use a different email address, contact support. Email changes need re-verification."
+                    : "Verify your email so we can reach you about security and sync problems."}
+              {sendsEmail && !profile.emailVerified && !profile.isDemo ? (
                 <>
                   {" "}
                   <Button type="button" variant="link" size="sm" className="h-auto text-xs" onClick={resend} disabled={sending}>

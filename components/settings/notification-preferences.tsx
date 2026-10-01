@@ -92,7 +92,7 @@ export function NotificationPreferencesMatrix({ items, channels }: { items: Noti
                         checked={checked}
                         disabled={disabled}
                         onCheckedChange={(v) => toggle(r.type, c.key, v)}
-                        aria-label={`${r.label} ${PHRASE[c.key]}${!c.available ? " (unavailable on this server)" : locked ? " (always on)" : ""}`}
+                        aria-label={`${r.label} ${PHRASE[c.key]}${!c.available ? " (unavailable)" : locked ? " (always on)" : ""}`}
                       />
                       {locked ? <Lock className="size-3 text-muted-foreground" aria-hidden /> : null}
                     </span>

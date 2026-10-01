@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireOnboardedUser } from "@/lib/auth/guard";
+import { isDesktop } from "@/lib/config/env";
 import { COMMON_TIME_ZONES, todayIn } from "@/lib/dates";
 import { isEnabled } from "@/lib/flags";
 import { CANADIAN_PROVINCES, getProfile } from "@/lib/users/service";
@@ -18,6 +19,7 @@ export default async function ProfileSettingsPage() {
       <ProfileForm
         profile={{ firstName: profile.firstName, lastName: profile.lastName, email: profile.email, emailVerified: profile.emailVerified, country: profile.country, province: profile.province, isDemo: profile.isDemo }}
         provinces={CANADIAN_PROVINCES.map((p) => ({ code: p.code, name: p.name }))}
+        sendsEmail={!isDesktop()}
       />
       <RegionForm
         variant="profile"

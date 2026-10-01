@@ -32,26 +32,25 @@ export async function notify(userId: string, input: NotifyInput) {
     const exists = await prisma.notification.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: input.dedupeKey } }, select: { id: true } });
     if (exists) return null;
   }
-  let notification;
-  try {
-    notification = await prisma.notification.create({
-      data: {
+  // ON CONFLICT DO NOTHING: a concurrent notify with the same dedupe key wins without an error.
+  const [notification] = await prisma.notification.createManyAndReturn({
+    data: [
+      {
         userId,
         type: input.type,
         severity: input.severity ?? "INFO",
         title: input.title,
         body: input.body,
-        href: input.href,
-        dedupeKey: input.dedupeKey,
+        href: input.href ?? null,
+        dedupeKey: input.dedupeKey ?? null,
         metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
         // Email-only preference: keep the record for history but mark it read.
         readAt: inApp ? null : new Date(),
       },
-    });
-  } catch (error) {
-    if ((error as { code?: string }).code === "P2002") return null; // concurrent dedupe
-    throw error;
-  }
+    ],
+    skipDuplicates: true,
+  });
+  if (!notification) return null;
   if (emailOn && CHANNELS.email) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, isDemo: true } });
     if (user && !user.isDemo) await CHANNELS.email.deliver(notification, user);
