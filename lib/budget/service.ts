@@ -49,9 +49,21 @@ function periodBounds(period: BudgetPeriod, start: LocalDate, end?: LocalDate, w
 }
 
 export async function listBudgets(userId: string) {
-  const budgets = await prisma.budget.findMany({ where: { userId }, orderBy: { startDate: "desc" }, select: { id: true, name: true, period: true, startDate: true, endDate: true, mode: true } });
-  return budgets.map((b) => ({ ...b, startDate: fromDbDate(b.startDate), endDate: fromDbDate(b.endDate) }));
+  const budgets = await prisma.budget.findMany({
+    where: { userId },
+    orderBy: [{ startDate: "desc" }, { createdAt: "asc" }],
+    select: { id: true, name: true, period: true, startDate: true, endDate: true, mode: true, plannedIncomeCents: true, _count: { select: { items: true } } },
+  });
+  return budgets.map(({ _count, ...b }) => ({
+    ...b,
+    startDate: fromDbDate(b.startDate),
+    endDate: fromDbDate(b.endDate),
+    plannedIncomeCents: b.plannedIncomeCents === null ? null : toCents(b.plannedIncomeCents),
+    lineCount: _count.items,
+  }));
 }
+
+export type BudgetSummary = Awaited<ReturnType<typeof listBudgets>>[number];
 
 export async function findBudget(userId: string, period: BudgetPeriod, startDate: LocalDate) {
   return prisma.budget.findFirst({ where: { userId, period, startDate: toDbDate(startDate) }, orderBy: { createdAt: "asc" } });
@@ -229,10 +241,15 @@ export async function budgetView(userId: string, budgetId: string) {
       return { categoryId: id, name: c?.name ?? "Uncategorized", icon: c?.icon ?? "circle-dashed", color: c?.color ?? "#94a3b8", spent: v };
     })
     .sort((a, b) => b.spent - a.spent);
+  // Lines without a category (savings, debt payoff) are planned but never spent against, so
+  // they count in `budgeted` (and the zero-based view) but not in what's left to spend.
+  const tracked = lines.filter((l) => l.categoryId);
   const totals = {
     budgeted: lines.reduce((a, l) => a + l.budgeted, 0),
-    available: lines.reduce((a, l) => a + l.available, 0),
-    spent: lines.reduce((a, l) => a + l.spent, 0),
+    setAside: lines.reduce((a, l) => a + (l.categoryId ? 0 : l.budgeted), 0),
+    rollover: tracked.reduce((a, l) => a + l.rollover, 0),
+    available: tracked.reduce((a, l) => a + l.available, 0),
+    spent: tracked.reduce((a, l) => a + l.spent, 0),
     unbudgetedSpent: unbudgeted.reduce((a, u) => a + u.spent, 0),
   };
   const remaining = totals.available - totals.spent;

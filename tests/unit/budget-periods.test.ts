@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { budgetHref, parsePeriodParams, periodLabel, periodTiming, shiftPeriod } from "@/lib/budget/periods";
+import { formatBpsInput, parsePercentToBps } from "@/lib/budget/percent";
 import { crossedThreshold, nextThreshold, normalizeThresholds } from "@/lib/budget/thresholds";
 
 describe("parsePeriodParams", () => {
@@ -85,5 +86,27 @@ describe("thresholds", () => {
     expect(nextThreshold(0, [80, 100])).toBe(80);
     expect(nextThreshold(8500, [50, 80, 100])).toBe(100);
     expect(nextThreshold(10500, [80, 100])).toBeNull();
+  });
+});
+
+describe("percent input", () => {
+  it("parses whole and decimal percentages into basis points", () => {
+    expect(parsePercentToBps("10")).toBe(1000);
+    expect(parsePercentToBps("12.5")).toBe(1250);
+    expect(parsePercentToBps("12,25 %")).toBe(1225);
+    expect(parsePercentToBps(".5")).toBe(50);
+    expect(parsePercentToBps("100")).toBe(10000);
+    expect(parsePercentToBps("100.01")).toBeNull();
+    expect(parsePercentToBps("150", 20000)).toBe(15000);
+    expect(parsePercentToBps("1.234")).toBeNull();
+    expect(parsePercentToBps("abc")).toBeNull();
+    expect(parsePercentToBps("")).toBeNull();
+  });
+
+  it("formats basis points for editing", () => {
+    expect(formatBpsInput(1000)).toBe("10");
+    expect(formatBpsInput(1250)).toBe("12.5");
+    expect(formatBpsInput(1205, "fr-CA")).toBe("12,05");
+    expect(formatBpsInput(null)).toBe("");
   });
 });
