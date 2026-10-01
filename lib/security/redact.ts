@@ -4,7 +4,9 @@
 const SENSITIVE_KEY = /(pass(word)?|secret|token|authorization|cookie|credential|api[-_]?key|access[-_]?key|private|pin|sin|ssn|card[-_]?number|cvv|account[-_]?number)/i;
 
 export function redact<T>(value: T, depth = 0): T {
-  if (depth > 6 || value === null || value === undefined) return value;
+  if (value === null || value === undefined) return value;
+  // Past the depth limit, drop nested structures instead of returning them unredacted.
+  if (depth > 6) return (typeof value === "object" && !(value instanceof Date) ? "[TRUNCATED]" : value) as T;
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1)) as T;
   if (typeof value === "bigint") return value.toString() as T;
   if (typeof value === "object" && !(value instanceof Date)) {
