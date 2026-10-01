@@ -223,15 +223,17 @@ export async function deleteManualAccount(userId: string, id: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function createLinkSession(userId: string, reconnectConnectionId?: string) {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { locale: true } });
+  const language = user.locale.startsWith("fr") ? ("fr" as const) : ("en" as const);
   if (reconnectConnectionId) {
     const c = await prisma.providerConnection.findFirst({ where: { id: reconnectConnectionId, userId } });
     if (!c) throw notFound("Connection");
     const provider = getProvider(c.provider);
-    return provider.createLinkSession(userId, { reconnectItemId: c.providerItemId, accessToken: c.encryptedAccessToken ? decryptSecret(c.encryptedAccessToken) : undefined });
+    return provider.createLinkSession(userId, { reconnectItemId: c.providerItemId, accessToken: c.encryptedAccessToken ? decryptSecret(c.encryptedAccessToken) : undefined, language });
   }
   const provider = getDefaultProvider();
-  if (!provider.isConfigured()) throw new ProviderError("NOT_CONFIGURED", "Bank connections aren't configured on this server yet. You can add accounts manually.");
-  return provider.createLinkSession(userId);
+  if (!provider.isConfigured()) throw new ProviderError("NOT_CONFIGURED", "Bank connections aren't configured on this server yet. You can import a CSV file or add accounts manually.");
+  return provider.createLinkSession(userId, { language });
 }
 
 export function mockInstitutions() {
@@ -246,6 +248,12 @@ export async function completeConnection(userId: string, publicToken: string, me
   // Only the demo seeder picks a provider explicitly (always MOCK); users get the configured one.
   const provider = opts.providerType ? getProvider(opts.providerType) : getDefaultProvider();
   const exchange = await provider.exchangePublicToken(userId, publicToken, metadata);
+  // Never touch a connection that belongs to someone else (checked before any write).
+  const existing = await prisma.providerConnection.findUnique({
+    where: { provider_providerItemId: { provider: provider.id, providerItemId: exchange.providerItemId } },
+    select: { userId: true },
+  });
+  if (existing && existing.userId !== userId) throw new AppError("FORBIDDEN", "This connection belongs to another user.");
   const institution = await prisma.institution.upsert({
     where: { provider_providerInstitutionId: { provider: provider.id, providerInstitutionId: exchange.institution.providerInstitutionId } },
     update: { name: exchange.institution.name, primaryColor: exchange.institution.primaryColor ?? undefined },
@@ -256,7 +264,6 @@ export async function completeConnection(userId: string, publicToken: string, me
     update: { encryptedAccessToken: encryptSecret(exchange.accessToken), status: "ACTIVE", lastSyncError: null, institutionId: institution.id },
     create: { userId, provider: provider.id, providerItemId: exchange.providerItemId, institutionId: institution.id, encryptedAccessToken: encryptSecret(exchange.accessToken) },
   });
-  if (connection.userId !== userId) throw new AppError("FORBIDDEN", "This connection belongs to another user.");
   await audit(userId, "account.connected", { type: "connection", id: connection.id }, { provider: provider.id, institution: institution.name });
   const sync = await syncConnection(userId, connection.id, "connect");
   const accounts = await prisma.account.count({ where: { connectionId: connection.id } });

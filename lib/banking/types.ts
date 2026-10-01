@@ -94,7 +94,7 @@ export interface FinancialDataProvider {
   /** True when the provider operates on simulated data (never real money). */
   readonly isSimulated: boolean;
   isConfigured(): boolean;
-  createLinkSession(userId: string, opts?: { reconnectItemId?: string; accessToken?: string }): Promise<LinkSession>;
+  createLinkSession(userId: string, opts?: { reconnectItemId?: string; accessToken?: string; language?: "en" | "fr" }): Promise<LinkSession>;
   exchangePublicToken(userId: string, publicToken: string, metadata?: Record<string, unknown>): Promise<ExchangeResult>;
   getAccounts(accessToken: string): Promise<ProviderAccount[]>;
   /** Fresh balances (may trigger a live refresh at the institution). */

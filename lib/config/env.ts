@@ -25,7 +25,10 @@ const schema = z.object({
   FLINKS_CUSTOMER_ID: z.string().optional(),
   FLINKS_API_URL: z.string().url().optional(),
   FLINKS_CONNECT_URL: z.string().url().optional(),
+  /** Flinks secret key, used only server-side to mint short-lived authorize tokens. */
   FLINKS_SECRET: z.string().optional(),
+  /** Flinks API key (`x-api-key`) for data endpoints, when your instance requires one. */
+  FLINKS_API_KEY: z.string().optional(),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_FROM: z.string().default("Harbour <no-reply@harbour.local>"),
   RESEND_API_KEY: z.string().optional(),

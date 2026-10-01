@@ -9,6 +9,7 @@ import { findDuplicate, type DedupeExisting } from "@/lib/transactions/dedupe";
 import { ingestTransactions } from "@/lib/transactions/ingest";
 import { detectAndPersistRecurring } from "@/lib/recurring/service";
 import { matchTransfers } from "@/lib/transactions/transfers";
+import { bankCategoryToSystemKey } from "./bank-categories";
 import { MAX_IMPORT_ROWS, normalizeImportRows, type importPayloadSchema } from "./normalize";
 
 type Payload = z.infer<typeof importPayloadSchema>;
@@ -18,7 +19,7 @@ async function prepare(userId: string, payload: Payload) {
   if (!account) throw notFound("Account");
   const rows = normalizeImportRows(payload.rows, payload.mapping, payload.hasHeader);
   if (rows.length > MAX_IMPORT_ROWS) throw new AppError("VALIDATION_FAILED", `Import at most ${MAX_IMPORT_ROWS} rows at a time.`);
-  const valid = rows.filter((r) => !r.errors.length);
+  const valid = rows.filter((r) => !r.errors.length && !r.skipReason);
   const dates = valid.map((r) => r.date!).sort();
   let existing: DedupeExisting[] = [];
   if (dates.length) {
@@ -31,6 +32,7 @@ async function prepare(userId: string, payload: Payload) {
   const claimed = new Set<string>();
   const preview = rows.map((r) => {
     if (r.errors.length) return { ...r, status: "error" as const };
+    if (r.skipReason) return { ...r, status: "skipped" as const };
     const dup = findDuplicate({ accountId: account.id, date: r.date!, amountCents: r.amountCents!, description: r.description, merchantName: r.merchantName }, existing, claimed);
     if (dup) {
       claimed.add(dup.existingId);
@@ -49,6 +51,7 @@ export async function previewImport(userId: string, payload: Payload) {
       total: preview.length,
       new: preview.filter((r) => r.status === "new").length,
       duplicate: preview.filter((r) => r.status === "duplicate").length,
+      skipped: preview.filter((r) => r.status === "skipped").length,
       error: preview.filter((r) => r.status === "error").length,
     },
   };
@@ -57,8 +60,16 @@ export async function previewImport(userId: string, payload: Payload) {
 /** Validate → normalise → deduplicate → import → categorise (+ automations, transfers, recurring). */
 export async function commitImport(userId: string, payload: Payload) {
   const { account, preview } = await prepare(userId, payload);
-  const categories = await prisma.category.findMany({ where: { userId }, select: { id: true, name: true } });
-  const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));
+  const categories = await prisma.category.findMany({ where: { userId }, select: { id: true, name: true, systemKey: true } });
+  const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c]));
+  // The file's category column: a match to one of the user's own custom categories is
+  // applied as-is; built-in names and bank labels only hint (user rules still win).
+  const categoryFor = (name: string | null) => {
+    if (!name) return { categoryId: null, categoryHint: null };
+    const match = byName.get(name.toLowerCase());
+    if (match && !match.systemKey) return { categoryId: match.id, categoryHint: null };
+    return { categoryId: null, categoryHint: match?.systemKey ?? bankCategoryToSystemKey(name) };
+  };
   const batch = await prisma.importBatch.create({ data: { userId, accountId: account.id, fileName: payload.fileName?.slice(0, 200), rowCount: preview.length } });
   const toImport = preview.filter((r) => r.status === "new");
   const result = await ingestTransactions(
@@ -69,18 +80,19 @@ export async function commitImport(userId: string, payload: Payload) {
       amountCents: r.amountCents!,
       description: r.description,
       merchantName: r.merchantName,
-      categoryId: r.categoryName ? (byName.get(r.categoryName.toLowerCase()) ?? null) : null,
+      ...categoryFor(r.categoryName),
     })),
     { importBatchId: batch.id, notify: false },
   );
   const errorCount = preview.filter((r) => r.status === "error").length;
-  const duplicateCount = preview.length - toImport.length - errorCount + result.duplicates;
+  const skippedCount = preview.filter((r) => r.status === "skipped").length;
+  const duplicateCount = preview.length - toImport.length - errorCount - skippedCount + result.duplicates;
   await prisma.importBatch.update({ where: { id: batch.id }, data: { importedCount: result.created.length, duplicateCount, errorCount } });
   if (result.created.length) {
     const earliest = toImport.map((r) => r.date!).sort()[0];
     await matchTransfers(userId, earliest);
     await detectAndPersistRecurring(userId);
   }
-  await audit(userId, "transaction.imported", { type: "import_batch", id: batch.id }, { imported: result.created.length, duplicates: duplicateCount, errors: errorCount });
-  return { imported: result.created.length, duplicates: duplicateCount, errors: errorCount, batchId: batch.id };
+  await audit(userId, "transaction.imported", { type: "import_batch", id: batch.id }, { imported: result.created.length, duplicates: duplicateCount, skipped: skippedCount, errors: errorCount });
+  return { imported: result.created.length, duplicates: duplicateCount, skipped: skippedCount, errors: errorCount, batchId: batch.id };
 }
