@@ -20,9 +20,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Sidebar flags={shellFlags} />
         <div className="flex min-h-dvh flex-col md:pl-16 xl:pl-60">
           <TopBar user={{ firstName: user.firstName, lastName: user.lastName, email: user.email, isDemo: user.isDemo }} unread={unread} />
-          <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-28 pt-5 sm:px-6 md:pb-12 lg:px-8">
+          <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-6 pt-5 sm:px-6 lg:px-8">
             {children}
           </main>
+          <footer className="mx-auto w-full max-w-7xl px-4 pb-28 pt-2 text-xs text-muted-foreground sm:px-6 md:pb-8 lg:px-8">
+            <p>This application provides financial organization and budgeting tools. It is not a bank and does not itself hold customer deposits.</p>
+          </footer>
         </div>
         <BottomNav flags={shellFlags} />
       </ShellProvider>
