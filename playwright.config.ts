@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
 import { E2E_PORT, E2E_SERVER_URL, e2eEnv } from "./tests/e2e/support/env";
 
@@ -11,6 +12,9 @@ import { E2E_PORT, E2E_SERVER_URL, e2eEnv } from "./tests/e2e/support/env";
  */
 const env = e2eEnv();
 const external = process.env.E2E_BASE_URL;
+// E2E_CHROMIUM, else a preinstalled Chromium where there is one, else the browser from `npx playwright install chromium`.
+const PREINSTALLED_CHROMIUM = "/opt/pw-browsers/chromium";
+const chromium = process.env.E2E_CHROMIUM || (existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined);
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -36,8 +40,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      // A preinstalled Chromium (no `playwright install`); E2E_CHROMIUM points elsewhere.
-      use: { ...devices["Desktop Chrome"], launchOptions: { executablePath: process.env.E2E_CHROMIUM || "/opt/pw-browsers/chromium" } },
+      use: { ...devices["Desktop Chrome"], launchOptions: chromium ? { executablePath: chromium } : {} },
     },
   ],
   webServer: external
