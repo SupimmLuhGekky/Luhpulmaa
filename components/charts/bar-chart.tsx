@@ -25,7 +25,7 @@ export function BarChart({ label, data, xKey, series, height = 240, formatX, sta
     >
       <ResponsiveContainer width="100%" height="100%">
         <RBarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={2}>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.7} />
           <XAxis dataKey={xKey} tickFormatter={(v) => fx(String(v))} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} minTickGap={8} />
           <YAxis width={64} tickFormatter={(v) => f.money(Number(v), { compact: true })} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
           <Tooltip
@@ -36,7 +36,7 @@ export function BarChart({ label, data, xKey, series, height = 240, formatX, sta
               ) : null
             }
           />
-          {showLegend && series.length > 1 ? <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }} /> : null}
+          {showLegend && series.length > 1 ? <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} formatter={(value) => <span className="text-muted-foreground">{value}</span>} /> : null}
           {series.map((s) => (
             <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={stacked ? 0 : [4, 4, 0, 0]} maxBarSize={28} stackId={stacked ? "a" : undefined} isAnimationActive={false} />
           ))}

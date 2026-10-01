@@ -11,6 +11,10 @@ import { DemoButton } from "@/components/landing/demo-button";
 
 export const metadata: Metadata = { title: { absolute: "Harbour — budgeting and money organisation" } };
 
+// Depends on the visitor's session cookie. Declared explicitly because the session lookup
+// below swallows errors, which would otherwise hide that signal from `next build`.
+export const dynamic = "force-dynamic";
+
 const FEATURES = [
   { icon: Wallet, title: "Safe to spend", body: "One number for what you can spend before payday, after bills, planned savings and your cash buffer." },
   { icon: PiggyBank, title: "Budgets and goals", body: "Monthly budgets with rollovers and alerts, and savings goals that tell you how much to put aside each week." },

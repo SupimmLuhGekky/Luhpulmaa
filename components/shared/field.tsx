@@ -1,12 +1,16 @@
 "use client";
 
 import * as React from "react";
+import { Controller } from "react-hook-form";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
+type RenderFn = (args: unknown) => React.ReactNode;
+
 /**
  * Accessible form field: wires the label, hint and error to the control through
- * `htmlFor`/`aria-describedby`/`aria-invalid`. The single child must accept an id.
+ * `htmlFor`/`aria-describedby`/`aria-invalid`. The single child must accept an id, or be a
+ * react-hook-form `<Controller>` whose `render` returns an element that accepts one.
  */
 export function Field({ label, hint, error, children, className, required, id: idProp }: {
   label: React.ReactNode;
@@ -28,7 +32,7 @@ export function Field({ label, hint, error, children, className, required, id: i
         {label}
         {required ? <span className="text-danger" aria-hidden> *</span> : null}
       </Label>
-      {React.cloneElement(children, { id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })}
+      {wire(children, { id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })}
       {hint && !error ? (
         <p id={hintId} className="text-xs text-muted-foreground">
           {hint}
@@ -41,6 +45,20 @@ export function Field({ label, hint, error, children, className, required, id: i
       ) : null}
     </div>
   );
+}
+
+/** Passes the control props to the child, reaching through a `<Controller>` to what it renders. */
+function wire(child: React.ReactElement<Record<string, unknown>>, control: Record<string, unknown>) {
+  if (child.type === Controller && typeof child.props.render === "function") {
+    const render = child.props.render as RenderFn;
+    return React.cloneElement(child, {
+      render: (args: unknown) => {
+        const rendered = render(args);
+        return React.isValidElement<Record<string, unknown>>(rendered) ? React.cloneElement(rendered, control) : rendered;
+      },
+    });
+  }
+  return React.cloneElement(child, control);
 }
 
 /** Form-level error banner. */

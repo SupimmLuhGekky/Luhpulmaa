@@ -32,9 +32,9 @@ export async function globalSearch(userId: string, rawQuery: string): Promise<Re
     prisma.subscription.findMany({ where: { userId, name: contains }, select: { id: true, name: true, amountCents: true }, take: 5 }),
   ]);
   return {
-    transaction: transactions.map((t) => ({ type: "transaction", id: t.id, title: t.merchantName ?? t.description, subtitle: `${fromDbDate(t.date)} · ${t.account.name}`, amountCents: toCents(t.amountCents), href: `/transactions?id=${t.id}` })),
+    transaction: transactions.map((t) => ({ type: "transaction", id: t.id, title: t.merchantName ?? t.description, subtitle: `${fromDbDate(t.date)} · ${t.account.name}`, amountCents: toCents(t.amountCents), href: `/transactions?txn=${t.id}` })),
     account: accounts.map((a) => ({ type: "account", id: a.id, title: a.name, subtitle: a.type.replace("_", " ").toLowerCase(), amountCents: toCents(a.currentBalanceCents), href: `/accounts/${a.id}` })),
-    category: categories.map((c) => ({ type: "category", id: c.id, title: c.name, subtitle: "Category", href: `/transactions?categoryId=${c.id}` })),
+    category: categories.map((c) => ({ type: "category", id: c.id, title: c.name, subtitle: "Category", href: `/transactions?category=${c.id}` })),
     goal: goals.map((g) => ({ type: "goal", id: g.id, title: g.name, subtitle: "Goal", amountCents: toCents(g.currentCents), href: `/goals/${g.id}` })),
     bill: bills.map((b) => ({ type: "bill", id: b.id, title: b.name, subtitle: "Bill", amountCents: toCents(b.amountCents), href: "/bills" })),
     subscription: subs.map((s) => ({ type: "subscription", id: s.id, title: s.name, subtitle: "Subscription", amountCents: toCents(s.amountCents), href: "/subscriptions" })),

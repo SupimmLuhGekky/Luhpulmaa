@@ -187,7 +187,7 @@ function LineMenu({ line, range, onEdit, onDelete }: { line: BudgetLineView; ran
         </DropdownMenuItem>
         {line.categoryId ? (
           <DropdownMenuItem asChild>
-            <Link href={`/transactions?categoryId=${line.categoryId}&from=${range.start}&to=${range.end}`}>
+            <Link href={`/transactions?category=${line.categoryId}&from=${range.start}&to=${range.end}`}>
               <ArrowLeftRight /> View transactions
             </Link>
           </DropdownMenuItem>

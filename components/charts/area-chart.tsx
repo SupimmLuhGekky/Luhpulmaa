@@ -44,7 +44,7 @@ export function AreaChart({ label, data, xKey, series, height = 240, formatX, re
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.7} />
           <XAxis dataKey={xKey} tickFormatter={(v) => fx(String(v))} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} minTickGap={24} />
           <YAxis
             width={64}
