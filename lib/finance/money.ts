@@ -87,11 +87,12 @@ export function ratioBps(part: Cents, whole: Cents): Bps {
 
 /** Formats basis points as a percentage string ("32.7%"). */
 export function formatBps(bps: Bps, fractionDigits = 1, locale = DEFAULT_LOCALE): string {
-  const negative = bps < 0;
   const abs = Math.abs(bps);
   // bps / 100 = percent with two decimals. Round to requested digits using integers.
   const scale = 10 ** Math.max(0, 2 - fractionDigits);
   const roundedHundredths = Number(divRound(BigInt(abs), BigInt(scale))) * scale;
+  // A tiny negative ratio that rounds to zero is shown as "0.0%", not "-0.0%".
+  const negative = bps < 0 && roundedHundredths > 0;
   const whole = Math.floor(roundedHundredths / 100);
   const frac = String(roundedHundredths % 100).padStart(2, "0").slice(0, fractionDigits);
   const decimalSep = locale.startsWith("fr") ? "," : ".";
