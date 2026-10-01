@@ -7,7 +7,7 @@ import { monthlyEquivalent } from "@/lib/finance/frequency";
 import { netWorthHistory, netWorthSummary } from "@/lib/networth/service";
 import { incomeSpendingSeries, spendingByCategory, spendingByMerchant, totalIncome, totalSpending, type TxnScope } from "./aggregates";
 import { generateInsights } from "./insights";
-import { analyticsQuerySchema, bucketFor, resolveRange, type AnalyticsQuery } from "./range";
+import { analyticsQuerySchema, bucketFor, fillSeries, resolveRange, type AnalyticsQuery } from "./range";
 
 export { analyticsQuerySchema, resolveRange, type AnalyticsQuery };
 
@@ -59,11 +59,13 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.name.localeCompare(b.name));
 
   const bucket = bucketFor(days);
-  const [series, monthly, recurringRows] = await Promise.all([
+  const [rawSeries, rawMonthly, recurringRows] = await Promise.all([
     incomeSpendingSeries(userId, range.from, range.to, bucket, scope),
     incomeSpendingSeries(userId, trendFrom, today, "month", scope),
     prisma.recurringTransaction.findMany({ where: { userId, status: { not: "DISMISSED" }, direction: "OUTFLOW" }, select: { averageAmountCents: true, frequency: true } }),
   ]);
+  const series = fillSeries(rawSeries, range.from, range.to, bucket);
+  const monthly = fillSeries(rawMonthly, trendFrom, today, "month");
   const recurringMonthly = recurringRows.reduce((a, r) => a + monthlyEquivalent(-Number(r.averageAmountCents), r.frequency), 0);
   const subscriptionsMonthly = subs.reduce((a, s) => a + monthlyEquivalent(Number(s.amountCents), s.frequency), 0);
   const completeMonths = monthly.filter((m) => m.period < today.slice(0, 7));

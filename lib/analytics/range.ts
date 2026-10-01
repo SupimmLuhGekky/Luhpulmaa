@@ -3,7 +3,7 @@
  * client components).
  */
 import { z } from "zod";
-import { addDays, addMonths, addYears, daysBetween, endOfMonth, isLocalDate, minDate, startOfMonth, startOfQuarter, startOfWeek, startOfYear, type LocalDate } from "@/lib/dates";
+import { addDays, addMonths, addMonthKey, addYears, daysBetween, endOfMonth, isLocalDate, minDate, monthKey, startOfMonth, startOfQuarter, startOfWeek, startOfYear, type LocalDate } from "@/lib/dates";
 
 export const ANALYTICS_RANGES = ["week", "month", "quarter", "year", "custom"] as const;
 export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
@@ -111,4 +111,29 @@ export function resolveRange(q: Pick<AnalyticsQuery, "range" | "from" | "to">, t
 /** Chart bucket for a range length: days up to a month, weeks up to ~4 months, then months. */
 export function bucketFor(days: number): "day" | "week" | "month" {
   return days <= 31 ? "day" : days <= 120 ? "week" : "month";
+}
+
+/**
+ * Completes an income/spending series with zero rows for periods without
+ * transactions, so time charts keep an even time axis. Period keys match the SQL
+ * buckets: "YYYY-MM-DD" days, ISO weeks starting on Monday, "YYYY-MM" months.
+ */
+export function fillSeries<T extends { period: string; income: number; spending: number }>(
+  series: T[],
+  from: LocalDate,
+  to: LocalDate,
+  bucket: "day" | "week" | "month",
+): { period: string; income: number; spending: number }[] {
+  const byPeriod = new Map(series.map((r) => [r.period, r]));
+  const keys: string[] = [];
+  if (bucket === "month") {
+    for (let k = monthKey(from); k <= monthKey(to); k = addMonthKey(k, 1)) keys.push(k);
+  } else {
+    const step = bucket === "week" ? 7 : 1;
+    for (let d = bucket === "week" ? startOfWeek(from, 1) : from; d <= to; d = addDays(d, step)) keys.push(d);
+  }
+  return keys.map((period) => {
+    const r = byPeriod.get(period);
+    return { period, income: r?.income ?? 0, spending: r?.spending ?? 0 };
+  });
 }

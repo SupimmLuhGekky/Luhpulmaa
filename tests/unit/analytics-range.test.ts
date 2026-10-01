@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyticsQuerySchema, bucketFor, resolveRange } from "@/lib/analytics/range";
+import { analyticsQuerySchema, bucketFor, fillSeries, resolveRange } from "@/lib/analytics/range";
 
 const ID_A = "0b6f3c5e-8a1d-4f2b-9c3e-1a2b3c4d5e6f";
 const ID_B = "1c7a4d6f-9b2e-4a3c-8d4f-2b3c4d5e6f70";
@@ -80,5 +80,29 @@ describe("bucketFor", () => {
     expect(bucketFor(32)).toBe("week");
     expect(bucketFor(120)).toBe("week");
     expect(bucketFor(121)).toBe("month");
+  });
+});
+
+describe("fillSeries", () => {
+  it("adds zero days so the time axis stays even", () => {
+    const out = fillSeries([{ period: "2026-09-02", income: 0, spending: 500 }], "2026-09-01", "2026-09-04", "day");
+    expect(out).toEqual([
+      { period: "2026-09-01", income: 0, spending: 0 },
+      { period: "2026-09-02", income: 0, spending: 500 },
+      { period: "2026-09-03", income: 0, spending: 0 },
+      { period: "2026-09-04", income: 0, spending: 0 },
+    ]);
+  });
+
+  it("uses Monday-based weeks like the SQL buckets", () => {
+    // 2026-07-01 is a Wednesday: its bucket starts on Monday 2026-06-29.
+    const out = fillSeries([{ period: "2026-07-06", income: 100, spending: 0 }], "2026-07-01", "2026-07-20", "week");
+    expect(out.map((r) => r.period)).toEqual(["2026-06-29", "2026-07-06", "2026-07-13", "2026-07-20"]);
+    expect(out[1].income).toBe(100);
+  });
+
+  it("fills months", () => {
+    const out = fillSeries([], "2026-01-15", "2026-03-02", "month");
+    expect(out.map((r) => r.period)).toEqual(["2026-01", "2026-02", "2026-03"]);
   });
 });
