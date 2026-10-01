@@ -1,7 +1,7 @@
 /**
  * Pure condition evaluation for the automation engine.
  */
-import { normalizeMerchant } from "@/lib/transactions/normalize";
+import { normalizeMerchant, normalizeText } from "@/lib/transactions/normalize";
 
 export interface EvaluableTransaction {
   merchantName: string | null;
@@ -30,15 +30,19 @@ export interface Condition {
 function textMatch(actual: string, op: Condition["operator"], expected: string): boolean {
   const a = normalizeMerchant(actual) || actual.toLowerCase();
   const e = normalizeMerchant(expected) || expected.toLowerCase();
+  // Merchant keys drop words like Interac, payment or city names, so partial matches also
+  // look at the whole text: "description contains Interac" matches an Interac e-transfer.
+  const fullA = normalizeText(actual);
+  const fullE = normalizeText(expected);
   switch (op) {
     case "EQUALS":
       return a === e;
     case "NOT_EQUALS":
       return a !== e;
     case "CONTAINS":
-      return a.includes(e);
+      return a.includes(e) || (fullE !== "" && fullA.includes(fullE));
     case "STARTS_WITH":
-      return a.startsWith(e);
+      return a.startsWith(e) || (fullE !== "" && fullA.startsWith(fullE));
     default:
       return false;
   }

@@ -215,8 +215,7 @@ describe("automations, categories and rules", () => {
     expect(await prisma.category.findUniqueOrThrow({ where: { id: a.customCategory } })).toMatchObject({ name: "Alice's hobby" });
   });
 
-  // lib/categories/service.ts (not editable here): createMerchantRule checks the category but not the subcategory.
-  it.fails("refuses a merchant rule that points at A's subcategory", async () => {
+  it("refuses a merchant rule that points at A's subcategory", async () => {
     await expect(createMerchantRule(B.id, { pattern: "bob coffee", categoryId: await categoryId(B.id, "restaurants"), subcategoryId: a.subcategory })).rejects.toMatchObject(notFound);
   });
 });

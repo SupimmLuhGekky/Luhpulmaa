@@ -42,14 +42,13 @@ describe("evaluateCondition: text fields", () => {
     expect(evaluateCondition(txn, c("MERCHANT", "GREATER_THAN", "a"))).toBe(false);
   });
 
-  // lib/automation/conditions.ts (not editable here): textMatch compares merchant keys, which drop
-  // "noise" words such as Interac, payment, Visa or city names, so these rules can never fire.
-  it.fails("matches description words that merchant keys drop (Interac, payment)", () => {
+  it("matches description words that merchant keys drop (Interac, payment)", () => {
     const etransfer = { ...txn, merchantName: null, description: "INTERAC E-TRANSFER TO J TREMBLAY", amountCents: -60000 };
     expect(evaluateCondition(etransfer, c("DESCRIPTION", "CONTAINS", "Interac"))).toBe(true);
+    expect(evaluateCondition(etransfer, c("DESCRIPTION", "STARTS_WITH", "Interac e-transfer"))).toBe(true);
   });
 
-  it.fails("matches 'payment' in a card payment description", () => {
+  it("matches 'payment' in a card payment description", () => {
     const payment = { ...txn, merchantName: null, description: "VISA PAYMENT - CASHBACK VISA", amountCents: -50000 };
     expect(evaluateCondition(payment, c("DESCRIPTION", "CONTAINS", "payment"))).toBe(true);
   });

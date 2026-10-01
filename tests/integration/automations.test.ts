@@ -75,7 +75,7 @@ describe("transaction automations", () => {
     expect(await prisma.goal.findUniqueOrThrow({ where: { id: vacation } })).toMatchObject({ currentCents: 25n });
 
     const runs = await prisma.automationRun.findMany({ where: { automationId: coffeeAutomation } });
-    expect(runs).toEqual([expect.objectContaining({ transactionId: coffee, status: "SUCCESS", summary: "tag “coffee”; round-up $0.25" })]);
+    expect(runs).toEqual([expect.objectContaining({ transactionId: coffee, status: "SUCCESS", summary: "tag “coffee”; round-up of $0.25 planned for Fictional vacation" })]);
     expect(await prisma.automation.findUniqueOrThrow({ where: { id: coffeeAutomation } })).toMatchObject({ executionCount: 1 });
 
     // Nothing moved: the account balance and the transaction list are as before.
@@ -166,18 +166,14 @@ describe("transaction automations", () => {
     expect(await prisma.automationRun.count({ where: { automationId: both } })).toBe(1);
   });
 
-  // lib/automation/engine.ts (not editable here): SET_CATEGORY only updates type/isTransfer for transfer
-  // categories, so a payment the keywords filed as a transfer stays out of spending after the rule recategorises it.
-  it.fails("makes a transfer-looking payment spending when an automation files it under an expense category", async () => {
+  it("makes a transfer-looking payment spending when an automation files it under an expense category", async () => {
     const housing = await categoryId(userId, "housing");
     await createAutomation(userId, automation({ name: "Landlord → Housing", conditions: [{ field: "DESCRIPTION", operator: "CONTAINS", value: "landlord" }], actions: [{ type: "SET_CATEGORY", config: { categoryId: housing } }] }));
     const { created } = await seedTransactions(userId, accountId, [{ date: "2026-10-01", amountCents: -95_000, description: "VIREMENT INTERAC LANDLORD FICTIF" }], { runAutomations: true });
     expect(await prisma.transaction.findUniqueOrThrow({ where: { id: created[0] } })).toMatchObject({ categoryId: housing, categorizedBy: "AUTOMATION", type: "EXPENSE", isTransfer: false });
   });
 
-  // lib/automation/service.ts (not editable here): applyToRecent runs every active automation on the
-  // recent transactions, not just the one the user chose.
-  it.fails("'apply to recent transactions' runs only the chosen automation", async () => {
+  it("'apply to recent transactions' runs only the chosen automation", async () => {
     const { created } = await seedTransactions(userId, accountId, [{ date: "2026-09-28", amountCents: -350, description: "FICTIONAL BAKERY", merchantName: "Fictional Bakery" }]);
     // Created after the purchase and never applied to the past by the user.
     await createAutomation(userId, automation({ name: "Bakery round-ups", conditions: [{ field: "MERCHANT", operator: "EQUALS", value: "Fictional Bakery" }], actions: [{ type: "ROUND_UP_TO_GOAL", config: { goalId: vacation, roundToCents: 100 } }] }));
