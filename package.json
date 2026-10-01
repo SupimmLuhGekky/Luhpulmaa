@@ -21,7 +21,15 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force",
-    "jobs:daily": "tsx --env-file-if-exists=.env --conditions=react-server scripts/run-daily-jobs.ts"
+    "jobs:daily": "tsx --env-file-if-exists=.env --conditions=react-server scripts/run-daily-jobs.ts",
+    "desktop:install": "npm ci --prefix desktop",
+    "desktop:build": "node desktop/scripts/build.mjs",
+    "desktop:sign": "node desktop/scripts/sign-mac.mjs",
+    "desktop:dmg": "node desktop/scripts/make-dmg.mjs",
+    "desktop:smoke": "node desktop/scripts/smoke.mjs",
+    "desktop:dev": "npm start --prefix desktop",
+    "desktop:typecheck": "npm run typecheck --prefix desktop",
+    "desktop:test": "npm test --prefix desktop"
   },
   "prisma": {
     "seed": "tsx --env-file-if-exists=.env --conditions=react-server prisma/seed.ts"

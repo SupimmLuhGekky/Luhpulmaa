@@ -39,7 +39,13 @@ const securityHeaders = [
 const isDesktopBuild = ["1", "true"].includes(process.env.HARBOUR_DESKTOP ?? "");
 
 const nextConfig: NextConfig = {
-  ...(isDesktopBuild ? { output: "standalone" as const } : {}),
+  ...(isDesktopBuild
+    ? {
+        output: "standalone" as const,
+        // The compiler is only needed while building; keep it out of the app bundle.
+        outputFileTracingExcludes: { "*": ["node_modules/typescript/**"] },
+      }
+    : {}),
   poweredByHeader: false,
   reactStrictMode: true,
   experimental: {
