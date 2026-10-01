@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { APP_GOALS, type AppGoalKey } from "@/lib/settings/options";
 
 export const DASHBOARD_WIDGETS = [
   { id: "safeToSpend", label: "Safe to spend" },
@@ -41,6 +42,29 @@ export const DEFAULT_LAYOUT: DashboardLayout = {
     { id: "insights", visible: true },
   ],
 };
+
+/** The cards that matter most for each thing a person wants help with (asked in onboarding). */
+const GOAL_WIDGETS: Record<AppGoalKey, WidgetId[]> = {
+  track_spending: ["spendingBreakdown", "incomeSpending", "recentTransactions"],
+  budget: ["budget"],
+  save: ["goals"],
+  debt: ["netWorth"],
+  bills: ["bills", "subscriptions"],
+  cash_flow: ["cashFlow"],
+  net_worth: ["netWorth"],
+};
+
+/**
+ * The default layout for someone who hasn't arranged their dashboard: safe to spend first,
+ * then the cards for what they said they want help with, then everything else.
+ */
+export function defaultLayoutFor(appGoals: readonly AppGoalKey[]): DashboardLayout {
+  if (!appGoals.length) return DEFAULT_LAYOUT;
+  const chosen = new Set(appGoals);
+  const first: WidgetId[] = ["safeToSpend", ...APP_GOALS.filter((g) => chosen.has(g.key)).flatMap((g) => GOAL_WIDGETS[g.key])];
+  const order = [...new Set([...first, ...DEFAULT_LAYOUT.widgets.map((w) => w.id)])];
+  return { widgets: order.map((id) => ({ id, visible: true })) };
+}
 
 /** Merges a stored layout with the defaults so new widgets appear and unknown ones are dropped. */
 export function resolveLayout(raw: unknown): DashboardLayout {

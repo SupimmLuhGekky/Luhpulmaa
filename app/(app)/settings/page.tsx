@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { isEnabled } from "@/lib/flags";
 import { getProfile } from "@/lib/users/service";
-import { COMPLIANCE_NOTICE } from "@/lib/banking-core";
 import { Badge } from "@/components/ui/badge";
 import { SettingsIndexList } from "@/components/settings/settings-shell";
 import { SettingsPageHeader } from "@/components/settings/settings-ui";
@@ -33,7 +32,6 @@ export default async function SettingsPage() {
         </div>
       </div>
       <SettingsIndexList automationsEnabled={isEnabled("ENABLE_AUTOMATIONS")} />
-      <p className="px-1 text-xs leading-relaxed text-muted-foreground">{COMPLIANCE_NOTICE}</p>
     </div>
   );
 }

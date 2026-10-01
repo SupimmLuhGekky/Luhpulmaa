@@ -9,16 +9,16 @@ import { CategoryIcon } from "@/components/shared/category-icon";
 import { useFormat } from "@/components/providers/format-provider";
 import type { GoalAccountOption, GoalDetail } from "@/lib/goals/service";
 import { ContributionHistory } from "./contribution-history";
-import { GoalMenu, useGoalActions } from "./goal-actions";
+import { GoalMenu, useGoalActions, type ContributionKind } from "./goal-actions";
 import { GoalGrowthChart } from "./goal-growth-chart";
 import { GoalProgressBar } from "./goal-progress-bar";
 import { deadlineText, GoalStatusBadge, humanDuration, PriorityBadge } from "./goal-status";
 import { KIND_EXPLANATION, KindLegend } from "./kind";
 
-export function GoalDetailScreen({ goal, accounts }: { goal: GoalDetail; accounts: GoalAccountOption[] }) {
+export function GoalDetailScreen({ goal, accounts, contributionKind }: { goal: GoalDetail; accounts: GoalAccountOption[]; contributionKind?: ContributionKind }) {
   const router = useRouter();
   const fmt = useFormat();
-  const { actions, dialogs } = useGoalActions({ accounts, onDeleted: () => router.push("/goals") });
+  const { actions, dialogs } = useGoalActions({ accounts, contributionKind, onDeleted: () => router.push("/goals") });
   const { progress, totals, pace } = goal;
   const pct = Math.floor(progress.progressBps / 100);
   const open = goal.status === "ACTIVE";

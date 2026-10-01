@@ -9,6 +9,8 @@ export interface FormatSettings {
   locale: string;
   timeZone: string;
   today: LocalDate;
+  /** Headline figures on overview cards in whole dollars (the user's setting). */
+  roundOverview?: boolean;
 }
 
 const FormatContext = React.createContext<FormatSettings>({ currency: "CAD", locale: "en-CA", timeZone: "America/Toronto", today: new Date().toISOString().slice(0, 10) });
@@ -24,6 +26,8 @@ export function useFormat() {
     () => ({
       ...s,
       money: (cents: number, opts: FormatCurrencyOptions = {}) => formatCurrency(cents, { currency: s.currency, locale: s.locale, ...opts }),
+      /** A headline figure on an overview card: whole dollars when the user chose rounding. */
+      overview: (cents: number, opts: FormatCurrencyOptions = {}) => formatCurrency(cents, { currency: s.currency, locale: s.locale, wholeDollars: Boolean(s.roundOverview), ...opts }),
       date: (d: LocalDate | null | undefined, style: DateStyle = "medium") => formatDate(d, style, s.locale),
       relative: (d: LocalDate) => formatRelativeDay(d, s.today, s.locale),
     }),

@@ -7,6 +7,8 @@ export type BeforePayday = BillsBeforePayday;
 export interface BillFormOptions {
   categories: { id: string; name: string; icon: string; color: string }[];
   accounts: { id: string; name: string; mask: string | null }[];
+  /** Reminder for a new bill, from the user's settings (days before the due date). */
+  defaultReminderDays: number;
 }
 
 /** Stable key of one occurrence (a bill on one due date). */

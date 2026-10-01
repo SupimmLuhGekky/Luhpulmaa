@@ -40,7 +40,7 @@ export function ConnectionsPanel({ connections, banking, f, syncing, reconnectin
         ? `Accounts that update through ${banking.displayName}`
         : "Accounts that update automatically";
   return (
-    <Card>
+    <Card id="connections" className="scroll-mt-20">
       <CardHeading
         title="Bank connections"
         description={description}

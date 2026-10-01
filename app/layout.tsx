@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import "react-day-picker/style.css";
 import "./globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
-import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: { default: "Harbour — budgeting and money organisation", template: "%s · Harbour" },
@@ -30,10 +29,10 @@ export const viewport: Viewport = {
   ],
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await getSessionUser().catch(() => null);
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The interface is written in English; a French locale setting only changes number and date formats.
   return (
-    <html lang={user?.locale ?? "en-CA"} suppressHydrationWarning>
+    <html lang="en-CA" suppressHydrationWarning>
       <body className="min-h-dvh">
         <a href="#main" className="sr-only z-[100] rounded-md bg-primary px-3 py-2 text-primary-foreground focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
           Skip to content

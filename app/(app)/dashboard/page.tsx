@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { todayIn } from "@/lib/dates";
 import { loadAccountCount, loadLayout } from "@/lib/dashboard/service";
+import { userPreferences } from "@/lib/settings/preferences";
+import { FormatProvider } from "@/components/providers/format-provider";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { CustomizeDashboard } from "@/components/dashboard/customize-dialog";
@@ -24,12 +26,12 @@ function greeting(timeZone: string, locale: string, firstName: string) {
 export default async function DashboardPage() {
   const user = await requireOnboardedUser();
   const today = todayIn(user.timeZone);
-  const [{ layout, customized }, accountCount] = await Promise.all([loadLayout(user.id), loadAccountCount(user.id)]);
+  const [{ layout, customized, personalized }, accountCount, prefs] = await Promise.all([loadLayout(user.id), loadAccountCount(user.id), userPreferences(user.id)]);
   const { title, date } = greeting(user.timeZone, user.locale, user.firstName);
   const visible = layout.widgets.filter((w) => w.visible);
 
   return (
-    <>
+    <FormatProvider value={{ currency: user.currency, locale: user.locale, timeZone: user.timeZone, today, roundOverview: prefs.roundOverviewAmounts }}>
       <PageHeader title={title} description={date} actions={<CustomizeDashboard layout={layout} customized={customized} />} />
       <QuickActions className="mb-5" />
       {accountCount === 0 ? (
@@ -41,7 +43,8 @@ export default async function DashboardPage() {
         {visible.map((w) => {
           const Widget = WIDGETS[w.id];
           return (
-            <div key={w.id} className={cn("min-w-0", WIDGET_SPAN[w.id], !customized && cn(MOBILE_ORDER[w.id] ?? "order-6", "md:order-none"))}>
+            // The plain default puts the everyday cards first on phones; an arranged or personalised order applies everywhere.
+            <div key={w.id} className={cn("min-w-0", WIDGET_SPAN[w.id], !customized && !personalized && cn(MOBILE_ORDER[w.id] ?? "order-6", "md:order-none"))}>
               <Suspense fallback={<WidgetSkeleton className="h-full" tall={TALL_WIDGETS.has(w.id)} />}>
                 <Widget userId={user.id} today={today} />
               </Suspense>
@@ -49,6 +52,6 @@ export default async function DashboardPage() {
           );
         })}
       </div>
-    </>
+    </FormatProvider>
   );
 }

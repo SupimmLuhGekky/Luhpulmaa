@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { goalAccountOptions, listGoalItems } from "@/lib/goals/service";
+import { userPreferences } from "@/lib/settings/preferences";
 import { GoalsScreen } from "@/components/goals/goals-screen";
 
 export const metadata: Metadata = { title: "Goals" };
@@ -9,6 +10,6 @@ export const metadata: Metadata = { title: "Goals" };
 export default async function GoalsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireOnboardedUser();
   const params = await searchParams;
-  const [goals, accounts] = await Promise.all([listGoalItems(user.id, user.timeZone), goalAccountOptions(user.id)]);
-  return <GoalsScreen goals={goals} accounts={accounts} openNew={params.new === "1"} />;
+  const [goals, accounts, prefs] = await Promise.all([listGoalItems(user.id, user.timeZone), goalAccountOptions(user.id), userPreferences(user.id)]);
+  return <GoalsScreen goals={goals} accounts={accounts} contributionKind={prefs.goalContributionKind} openNew={params.new === "1"} />;
 }

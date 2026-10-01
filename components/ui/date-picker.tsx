@@ -31,18 +31,28 @@ export interface DatePickerProps {
   className?: string;
   "aria-invalid"?: boolean;
   "aria-describedby"?: string;
+  /** Names the picker when no visible <label> points at it. */
+  "aria-label"?: string;
 }
 
 /** Calendar popover that stores plain YYYY-MM-DD dates (no time-zone drift). */
-export function DatePicker({ value, onChange, locale = "en-CA", placeholder = "Pick a date", clearable, min, max, id, disabled, className, ...aria }: DatePickerProps) {
+export function DatePicker({ value, onChange, locale = "en-CA", placeholder = "Pick a date", clearable, min, max, id, disabled, className, "aria-label": label, ...aria }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
   const selected = value ? toDate(value) : undefined;
+  const shown = value ? formatDate(value, "medium", locale) : placeholder;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <div className={cn("relative w-full min-w-0", className)}>
         <PopoverTrigger asChild>
-          <button type="button" id={id} disabled={disabled} className={cn(inputClass, "items-center justify-between gap-2 text-left", !value && "text-muted-foreground/70")} {...aria}>
-            <span className="truncate">{value ? formatDate(value, "medium", locale) : placeholder}</span>
+          <button
+            type="button"
+            id={id}
+            disabled={disabled}
+            className={cn(inputClass, "items-center justify-between gap-2 text-left", !value && "text-muted-foreground/70")}
+            aria-label={label ? `${label}: ${shown}` : undefined}
+            {...aria}
+          >
+            <span className="truncate">{shown}</span>
             <CalendarDays className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           </button>
         </PopoverTrigger>

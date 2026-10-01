@@ -13,7 +13,7 @@ import { useFormat } from "@/components/providers/format-provider";
 import type { GoalAccountOption, GoalListItem } from "@/lib/goals/service";
 import { GoalCard } from "./goal-card";
 import { GoalDialog } from "./goal-dialog";
-import { useGoalActions } from "./goal-actions";
+import { useGoalActions, type ContributionKind } from "./goal-actions";
 import { KIND_EXPLANATION, KindSwatch } from "./kind";
 
 type Filter = GoalListItem["status"];
@@ -21,16 +21,18 @@ type Filter = GoalListItem["status"];
 export interface GoalsScreenProps {
   goals: GoalListItem[];
   accounts: GoalAccountOption[];
+  /** How "Add money" records a contribution unless the person picks otherwise (their setting). */
+  contributionKind?: ContributionKind;
   /** /goals?new=1 (header "New → Goal") opens the create dialog. */
   openNew: boolean;
 }
 
-export function GoalsScreen({ goals, accounts, openNew }: GoalsScreenProps) {
+export function GoalsScreen({ goals, accounts, contributionKind, openNew }: GoalsScreenProps) {
   const router = useRouter();
   const fmt = useFormat();
   const [filter, setFilter] = React.useState<Filter>("ACTIVE");
   const [createOpen, setCreateOpen] = React.useState(openNew);
-  const { actions, dialogs } = useGoalActions({ accounts });
+  const { actions, dialogs } = useGoalActions({ accounts, contributionKind });
 
   React.useEffect(() => {
     if (openNew) setCreateOpen(true);

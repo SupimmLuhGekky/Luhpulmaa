@@ -16,16 +16,20 @@ import { netWorthHistory, netWorthSummary } from "@/lib/networth/service";
 import { listSubscriptions } from "@/lib/subscriptions/service";
 import { listTransactions } from "@/lib/transactions/service";
 import { transactionFiltersSchema } from "@/lib/transactions/schemas";
-import { resolveLayout, type DashboardLayout } from "./layout";
+import { parsePreferences } from "@/lib/settings/preferences";
+import { defaultLayoutFor, resolveLayout, type DashboardLayout } from "./layout";
 
 /**
  * Dashboard data loaders. Each widget loads its own data inside a Suspense boundary
  * so the page streams; `cache()` makes widgets that share a source (safe-to-spend,
  * this month's analytics…) hit the database once per request.
  */
-export const loadLayout = cache(async (userId: string): Promise<{ layout: DashboardLayout; customized: boolean }> => {
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { dashboardLayout: true } });
-  return { layout: resolveLayout(user.dashboardLayout), customized: user.dashboardLayout !== null };
+export const loadLayout = cache(async (userId: string): Promise<{ layout: DashboardLayout; customized: boolean; personalized: boolean }> => {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { dashboardLayout: true, preferences: true } });
+  if (user.dashboardLayout !== null) return { layout: resolveLayout(user.dashboardLayout), customized: true, personalized: false };
+  // Not arranged by hand: order the cards by what the person said they want help with.
+  const { appGoals } = parsePreferences(user.preferences);
+  return { layout: defaultLayoutFor(appGoals), customized: false, personalized: appGoals.length > 0 };
 });
 
 /** Saves the widget order/visibility; `null` resets to the default layout. */

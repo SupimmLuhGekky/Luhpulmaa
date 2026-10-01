@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { AppError } from "@/lib/api/errors";
 import { goalAccountOptions, goalDetail } from "@/lib/goals/service";
+import { userPreferences } from "@/lib/settings/preferences";
 import { GoalDetailScreen } from "@/components/goals/goal-detail-screen";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +33,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function GoalPage({ params }: Props) {
   const { id } = await params;
   const { user, goal } = await load(id);
-  const accounts = await goalAccountOptions(user.id);
-  return <GoalDetailScreen goal={goal} accounts={accounts} />;
+  const [accounts, prefs] = await Promise.all([goalAccountOptions(user.id), userPreferences(user.id)]);
+  return <GoalDetailScreen goal={goal} accounts={accounts} contributionKind={prefs.goalContributionKind} />;
 }

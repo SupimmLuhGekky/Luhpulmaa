@@ -100,15 +100,15 @@ function BillForm({ bill, options, onCancel, onSaved }: { bill: BillRow | null; 
           categoryId: "",
           accountId: "",
           autopay: false,
-          reminder: "3",
+          reminder: String(options.defaultReminderDays),
           notes: "",
         },
   });
   const errors = form.formState.errors;
   const reminderOptions = React.useMemo(() => {
-    const current = bill ? reminderValue(bill.reminderDaysBefore) : null;
+    const current = bill ? reminderValue(bill.reminderDaysBefore) : String(options.defaultReminderDays);
     return current && !REMINDER_OPTIONS.some((o) => o.value === current) ? [...REMINDER_OPTIONS, { value: current, label: `${current} days before` }] : REMINDER_OPTIONS;
-  }, [bill]);
+  }, [bill, options.defaultReminderDays]);
 
   const onSubmit = form.handleSubmit(async (v) => {
     setError(null);

@@ -49,11 +49,11 @@ export function BudgetCard({ data }: { data: BudgetCardData | null }) {
     <WidgetCard title="Budget" description={`${f.date(data.start, "monthDay")} – ${f.date(data.end, "monthDay")}`} href="/budget" linkLabel="Budget">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className={cn("tabular text-2xl font-semibold tracking-tight", data.totals.remaining < 0 && "text-danger")}>{f.money(data.totals.remaining)}</p>
+          <p className={cn("tabular text-2xl font-semibold tracking-tight", data.totals.remaining < 0 && "text-danger")}>{f.overview(data.totals.remaining)}</p>
           <p className="text-[13px] text-muted-foreground">{data.totals.remaining >= 0 ? "left to spend" : "over budget"}</p>
         </div>
         <p className="tabular text-right text-xs text-muted-foreground">
-          {f.money(data.totals.spent)} of {f.money(data.totals.available)}
+          {f.overview(data.totals.spent)} of {f.overview(data.totals.available)}
           {over ? (
             <Badge variant="danger" className="ml-1.5">
               {over} over

@@ -143,8 +143,8 @@ export function ExportPanel({ today, locale, months }: { today: LocalDate; local
                     <Select aria-label="Transactions to include" value={period} onChange={(e) => setPeriod(e.target.value as Period)} options={PERIODS} className="w-full sm:w-64" />
                     {period === "custom" ? (
                       <div className="grid gap-2 sm:max-w-md sm:grid-cols-2">
-                        <DatePicker value={from} onChange={setFrom} locale={locale} max={today} placeholder="From the start" clearable aria-invalid={rangeError ? true : undefined} />
-                        <DatePicker value={to} onChange={setTo} locale={locale} max={today} placeholder="Until today" clearable aria-invalid={rangeError ? true : undefined} />
+                        <DatePicker value={from} onChange={setFrom} locale={locale} max={today} placeholder="From the start" clearable aria-label="Export from" aria-invalid={rangeError ? true : undefined} />
+                        <DatePicker value={to} onChange={setTo} locale={locale} max={today} placeholder="Until today" clearable aria-label="Export until" aria-invalid={rangeError ? true : undefined} />
                       </div>
                     ) : null}
                     {rangeError ? (

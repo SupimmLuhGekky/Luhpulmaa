@@ -93,7 +93,7 @@ export function RunHistory({
                 <p className="mt-0.5 flex min-w-0 flex-wrap gap-x-1.5 text-xs text-muted-foreground">
                   {r.transaction ? (
                     <>
-                      <Link href={`/transactions?id=${r.transaction.id}`} className="min-w-0 max-w-[16rem] truncate underline-offset-4 hover:text-foreground hover:underline">
+                      <Link href={`/transactions?txn=${r.transaction.id}`} className="min-w-0 max-w-[16rem] truncate underline-offset-4 hover:text-foreground hover:underline">
                         {r.transaction.label}
                       </Link>
                       <span aria-hidden>·</span>

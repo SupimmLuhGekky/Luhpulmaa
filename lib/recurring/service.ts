@@ -1,9 +1,12 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { addDays, daysBetween, fromDbDate, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
-import { formatCurrency, toCents } from "@/lib/finance/money";
+import { toCents } from "@/lib/finance/money";
+import { FREQUENCY_LABELS } from "@/lib/dates/schedule";
 import { runSubscriptionDetectedAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
+import { userPreferences } from "@/lib/settings/preferences";
+import { notificationFormat } from "@/lib/notifications/format";
 import { detectRecurring, incomeSourceSyncData, keepSubscriptionChoice, type DetectedSeries } from "./detect";
 
 const BILL_CATEGORY_KEYS = new Set(["housing", "utilities", "insurance", "education"]);
@@ -109,10 +112,11 @@ async function ensureSubscription(userId: string, recurringId: string, s: Detect
       reminderDaysBefore: 2,
     },
   });
+  const f = await notificationFormat(userId);
   await notify(userId, {
     type: "SUBSCRIPTION",
     title: `Subscription detected: ${s.name}`,
-    body: `${formatCurrency(-s.lastAmountCents)} ${s.frequency.toLowerCase().replace("_", "-")}. Next charge expected ${s.nextExpectedDate}.`,
+    body: `${f.money(-s.lastAmountCents)} ${FREQUENCY_LABELS[s.frequency].toLowerCase()}. Next charge expected ${f.date(s.nextExpectedDate)}.`,
     href: "/subscriptions",
     dedupeKey: `subscription:detected:${recurringId}`,
   });
@@ -135,6 +139,7 @@ async function ensureBill(userId: string, recurringId: string, s: DetectedSeries
       accountId: s.accountId,
       recurringId,
       autopay: true,
+      reminderDaysBefore: (await userPreferences(userId)).billReminderDays,
       notes: "Detected from your transactions",
     },
   });
@@ -170,11 +175,12 @@ async function upsertIncomeSource(userId: string, s: DetectedSeries, today: Loca
     });
   }
   if (lastPaid !== s.lastDate && daysBetween(s.lastDate, today) <= 3) {
+    const f = await notificationFormat(userId);
     await notify(userId, {
       type: "PAYDAY",
       severity: "SUCCESS",
-      title: `Payday: ${formatCurrency(s.lastAmountCents)} from ${s.name}`,
-      body: `Next paycheque expected around ${s.nextExpectedDate} (estimate).`,
+      title: `Payday: ${f.money(s.lastAmountCents)} from ${s.name}`,
+      body: `Next paycheque expected around ${f.date(s.nextExpectedDate)} (estimate).`,
       href: "/income",
       dedupeKey: `payday:${s.seriesKey}:${s.lastDate}`,
     });

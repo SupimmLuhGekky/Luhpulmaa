@@ -6,6 +6,7 @@ import { fromDbDate, startOfWeek, type LocalDate } from "@/lib/dates";
 import { formatCurrency, toCents } from "@/lib/finance/money";
 import { addContribution } from "@/lib/goals/service";
 import { notify } from "@/lib/notifications/service";
+import { notificationFormat } from "@/lib/notifications/format";
 import { allocationAmount, evaluateConditions, roundUpAmount, type Condition } from "./conditions";
 import { actionConfigSchemas } from "./schemas";
 
@@ -157,11 +158,12 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
     }
     case "NOTIFY": {
       const cfg = actionConfigSchemas.NOTIFY.parse(action.config);
+      const f = await notificationFormat(userId);
       await notify(userId, {
         type: "AUTOMATION",
         title: cfg.title,
-        body: cfg.message || `${txn.merchantName || txn.description}: ${formatCurrency(amount, { signed: true })} on ${date}.`,
-        href: `/transactions?id=${txn.id}`,
+        body: cfg.message || `${txn.merchantName || txn.description}: ${f.money(amount, { signed: true })} on ${f.date(date)}.`,
+        href: `/transactions?txn=${txn.id}`,
         dedupeKey: `automation:${automation.id}:txn:${txn.id}`,
       });
       return "notified";
@@ -267,10 +269,11 @@ export async function runSubscriptionDetectedAutomations(userId: string, subscri
     for (const action of a.actions) {
       if (action.type !== "NOTIFY") continue;
       const c = actionConfigSchemas.NOTIFY.parse(action.config);
+      const f = await notificationFormat(userId);
       await notify(userId, {
         type: "SUBSCRIPTION",
         title: c.title,
-        body: c.message || `New subscription detected: ${subscription.name} (${formatCurrency(subscription.amountCents)}).`,
+        body: c.message || `New subscription detected: ${subscription.name} (${f.money(subscription.amountCents)}).`,
         href: "/subscriptions",
         dedupeKey: `automation:${a.id}:sub:${subscription.id}`,
       });
@@ -291,11 +294,12 @@ export async function runBudgetThresholdAutomations(userId: string, event: { bud
     for (const action of a.actions) {
       if (action.type !== "NOTIFY") continue;
       const c = actionConfigSchemas.NOTIFY.parse(action.config);
+      const f = await notificationFormat(userId);
       await notify(userId, {
         type: "BUDGET_WARNING",
         severity: event.usedPercent >= 100 ? "WARNING" : "INFO",
         title: c.title,
-        body: c.message || `${event.categoryName} budget is ${event.usedPercent}% used (${formatCurrency(event.spent)} of ${formatCurrency(event.available)}).`,
+        body: c.message || `${event.categoryName} budget is ${event.usedPercent}% used (${f.money(event.spent)} of ${f.money(event.available)}).`,
         href: "/budget",
         dedupeKey: `automation:${a.id}:budget:${event.periodKey}:${event.budgetItemId}`,
       });

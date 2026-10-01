@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { userPreferences } from "@/lib/settings/preferences";
 import { AppearanceForm } from "@/components/settings/appearance-form";
+import { RoundingSwitch } from "@/components/settings/rounding-switch";
 import { SettingsPageHeader, SettingsSection } from "@/components/settings/settings-ui";
 
 export const metadata: Metadata = { title: "Appearance · Settings" };
@@ -12,9 +13,12 @@ export default async function AppearanceSettingsPage() {
   const prefs = await userPreferences(user.id);
   return (
     <div className="space-y-6">
-      <SettingsPageHeader title="Appearance" description="How Harbour looks on this device." />
+      <SettingsPageHeader title="Appearance" description="How Harbour looks on this device, and how the dashboard shows amounts." />
       <SettingsSection id="theme" title="Theme">
         <AppearanceForm saved={prefs.theme} />
+      </SettingsSection>
+      <SettingsSection id="dashboard" title="Dashboard">
+        <RoundingSwitch initial={prefs.roundOverviewAmounts} />
       </SettingsSection>
       <p className="px-1 text-xs text-muted-foreground">
         Looking for date and number formats? They&apos;re in{" "}

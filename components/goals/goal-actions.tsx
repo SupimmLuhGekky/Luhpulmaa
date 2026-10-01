@@ -13,12 +13,13 @@ import { ContributionDialog, type ContributionDialogProps } from "./contribution
 import { GoalDialog } from "./goal-dialog";
 
 type Status = GoalListItem["status"];
+export type ContributionKind = NonNullable<NonNullable<ContributionDialogProps["initial"]>["kind"]>;
 
 /**
  * Edit, add money, archive/restore, complete/reopen and delete for goals, shared by
  * the goals list and the goal page. Render `dialogs` once; call the returned handlers.
  */
-export function useGoalActions({ accounts, onDeleted }: { accounts: GoalAccountOption[]; onDeleted?: (goal: GoalListItem) => void }) {
+export function useGoalActions({ accounts, contributionKind, onDeleted }: { accounts: GoalAccountOption[]; contributionKind?: ContributionKind; onDeleted?: (goal: GoalListItem) => void }) {
   const router = useRouter();
   const [editing, setEditing] = React.useState<GoalListItem | null>(null);
   const [adding, setAdding] = React.useState<{ goal: GoalListItem; initial?: ContributionDialogProps["initial"] } | null>(null);
@@ -57,7 +58,7 @@ export function useGoalActions({ accounts, onDeleted }: { accounts: GoalAccountO
           open
           onOpenChange={(o) => !o && setAdding(null)}
           goal={{ id: adding.goal.id, name: adding.goal.name, totals: adding.goal.totals, remaining: adding.goal.progress.remaining }}
-          initial={adding.initial}
+          initial={{ kind: contributionKind, ...adding.initial }}
         />
       ) : null}
       <ConfirmDialog

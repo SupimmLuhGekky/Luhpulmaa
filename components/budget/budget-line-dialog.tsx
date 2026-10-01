@@ -60,6 +60,8 @@ export interface BudgetLineDialogProps {
   /** Prefill for a new line (e.g. from unbudgeted spending). */
   preset?: { categoryId: string | null; amountCents: number | null } | null;
   defaultThresholds: number[];
+  /** Whether a new line carries unspent money into next month (the user's setting). */
+  defaultRollover?: boolean;
 }
 
 /** Add or edit one line of a budget: fixed amount or % of income, rollover and alert thresholds. */
@@ -71,7 +73,7 @@ export function BudgetLineDialog(props: BudgetLineDialogProps) {
   );
 }
 
-function LineForm({ onOpenChange, budgetId, period, incomeBase, incomeIsPlanned, categories, line, preset, defaultThresholds }: BudgetLineDialogProps) {
+function LineForm({ onOpenChange, budgetId, period, incomeBase, incomeIsPlanned, categories, line, preset, defaultThresholds, defaultRollover = false }: BudgetLineDialogProps) {
   const router = useRouter();
   const fmt = useFormat();
   const [error, setError] = React.useState<string | null>(null);
@@ -100,7 +102,7 @@ function LineForm({ onOpenChange, budgetId, period, incomeBase, incomeIsPlanned,
           amountType: "FIXED",
           amountCents: preset?.amountCents ?? null,
           percentBps: null,
-          rolloverEnabled: false,
+          rolloverEnabled: defaultRollover,
           alertThresholds: defaultThresholds,
         },
   });

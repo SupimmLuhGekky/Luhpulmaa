@@ -5,9 +5,11 @@ import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
 import { addDays, daysBetween, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { nextOccurrence, occurrencesBetween } from "@/lib/dates/schedule";
-import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
+import { toCents, type Cents } from "@/lib/finance/money";
 import { expectedPaydays } from "@/lib/income/service";
 import { notify } from "@/lib/notifications/service";
+import { userPreferences } from "@/lib/settings/preferences";
+import { notificationFormat } from "@/lib/notifications/format";
 import { OVERDUE_LOOKBACK_DAYS, paydayWindow } from "./calendar";
 
 export { OVERDUE_LOOKBACK_DAYS };
@@ -159,8 +161,8 @@ export async function createBill(userId: string, input: z.infer<typeof billInput
       categoryId: input.categoryId ?? null,
       accountId: input.accountId ?? null,
       autopay: input.autopay,
-      // null means "no reminder"; only an omitted value gets the 3-day default.
-      reminderDaysBefore: input.reminderDaysBefore === undefined ? 3 : input.reminderDaysBefore,
+      // null means "no reminder"; only an omitted value gets the user's default.
+      reminderDaysBefore: input.reminderDaysBefore === undefined ? (await userPreferences(userId)).billReminderDays : input.reminderDaysBefore,
       notes: input.notes ?? null,
     },
   });
@@ -256,6 +258,7 @@ export async function sendBillReminders(userId: string, today: LocalDate) {
   const upcoming = (await billOccurrences(userId, today, addDays(today, 30))).filter((o) => !o.paid);
   const bills = await prisma.bill.findMany({ where: { userId, id: { in: upcoming.map((o) => o.billId) } }, select: { id: true, reminderDaysBefore: true } });
   const reminder = new Map(bills.map((b) => [b.id, b.reminderDaysBefore]));
+  const f = await notificationFormat(userId);
   for (const o of upcoming) {
     const days = daysBetween(today, o.dueDate);
     const window = reminder.get(o.billId);
@@ -264,7 +267,7 @@ export async function sendBillReminders(userId: string, today: LocalDate) {
       type: "UPCOMING_BILL",
       severity: days <= 1 ? "WARNING" : "INFO",
       title: days === 0 ? `${o.name} is due today` : `${o.name} is due in ${days} day${days === 1 ? "" : "s"}`,
-      body: `${formatCurrency(o.amountCents)}${o.isVariableAmount ? " (estimated)" : ""} due ${o.dueDate}${o.autopay ? " — set to autopay" : ""}.`,
+      body: `${f.money(o.amountCents)}${o.isVariableAmount ? " (estimated)" : ""} due ${f.date(o.dueDate)}${o.autopay ? ", set to autopay" : ""}.`,
       href: "/bills",
       dedupeKey: `bill:${o.billId}:${o.dueDate}`,
     });

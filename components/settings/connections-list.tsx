@@ -126,7 +126,7 @@ export function ConnectionsList({ connections }: { connections: ConnectionRow[] 
               <div className="flex shrink-0 items-center gap-2 pl-12 sm:pl-0">
                 {needsReconnect ? (
                   <Button asChild size="sm" variant="outline">
-                    <Link href="/accounts">Reconnect</Link>
+                    <Link href="/accounts#connections">Reconnect</Link>
                   </Button>
                 ) : null}
                 {!disconnected ? (

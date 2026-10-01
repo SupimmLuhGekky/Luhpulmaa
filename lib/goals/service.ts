@@ -8,6 +8,7 @@ import { addDays, dateInZone, fromDbDate, todayIn, toDbDate, type LocalDate } fr
 import { calculateGoalPace, calculateGoalProgress, type GoalPace, type GoalProgress } from "@/lib/finance/calculations";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
 import { notify } from "@/lib/notifications/service";
+import { notificationFormat } from "@/lib/notifications/format";
 import { growthSeries, totalsByKind, type GrowthPoint, type KindTotals } from "./contributions";
 
 export const goalInputSchema = z.object({
@@ -188,6 +189,7 @@ export async function addContribution(
   });
   if (!result) return null;
   const { goal, before, after, target } = result;
+  const f = await notificationFormat(userId);
   for (const m of MILESTONES) {
     const threshold = Math.ceil((target * m) / 10000);
     if (before < threshold && after >= threshold) {
@@ -195,7 +197,7 @@ export async function addContribution(
         type: "GOAL_PROGRESS",
         severity: m === 10000 ? "SUCCESS" : "INFO",
         title: m === 10000 ? `${goal.name} reached!` : `${goal.name} is ${m / 100}% funded`,
-        body: `${formatCurrency(after)} of ${formatCurrency(target)} set aside.`,
+        body: `${f.money(after)} of ${f.money(target)} set aside.`,
         href: `/goals/${goal.id}`,
         dedupeKey: `goal:${goal.id}:milestone:${m}`,
       });
@@ -356,6 +358,7 @@ export async function goalAccountOptions(userId: string): Promise<GoalAccountOpt
 
 export async function checkGoalDeadlines(userId: string, today: LocalDate) {
   const goals = await prisma.goal.findMany({ where: { userId, status: "ACTIVE", deadline: { not: null, lte: toDbDate(addDays(today, 30)) } } });
+  const f = await notificationFormat(userId);
   for (const g of goals) {
     const deadline = fromDbDate(g.deadline)!;
     const progress = calculateGoalProgress(toCents(g.targetCents), toCents(g.currentCents), deadline, today);
@@ -366,7 +369,7 @@ export async function checkGoalDeadlines(userId: string, today: LocalDate) {
       type: "GOAL_DEADLINE",
       severity: days < 0 ? "WARNING" : "INFO",
       title: days < 0 ? `${g.name} deadline has passed` : `${g.name} deadline in ${days} day${days === 1 ? "" : "s"}`,
-      body: `${formatCurrency(progress.remaining)} still needed to reach ${formatCurrency(progress.target)}.`,
+      body: `${f.money(progress.remaining)} still needed to reach ${f.money(progress.target)}.`,
       href: `/goals/${g.id}`,
       dedupeKey: `goal:${g.id}:deadline:${bucket}`,
     });

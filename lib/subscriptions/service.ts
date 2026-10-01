@@ -6,8 +6,9 @@ import { audit } from "@/lib/audit";
 import { addDays, daysBetween, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { nextOccurrence } from "@/lib/dates/schedule";
 import { monthlyEquivalent, yearlyEquivalent } from "@/lib/finance/frequency";
-import { formatCurrency, toCents } from "@/lib/finance/money";
+import { toCents } from "@/lib/finance/money";
 import { notify } from "@/lib/notifications/service";
+import { notificationFormat } from "@/lib/notifications/format";
 import { detectPriceChange } from "./price";
 import { SUBSCRIPTION_FREQUENCIES } from "./upcoming";
 
@@ -154,6 +155,7 @@ export async function unmarkSubscription(userId: string, id: string) {
 
 export async function sendSubscriptionReminders(userId: string, today: LocalDate) {
   const subs = await prisma.subscription.findMany({ where: { userId, status: "ACTIVE", reminderDaysBefore: { not: null }, nextChargeDate: { gte: toDbDate(today), lte: toDbDate(addDays(today, 30)) } } });
+  const f = await notificationFormat(userId);
   for (const s of subs) {
     const next = fromDbDate(s.nextChargeDate)!;
     const days = daysBetween(today, next);
@@ -161,7 +163,7 @@ export async function sendSubscriptionReminders(userId: string, today: LocalDate
     await notify(userId, {
       type: "SUBSCRIPTION",
       title: `${s.name} renews ${days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}`,
-      body: `${formatCurrency(toCents(s.amountCents))} will be charged on ${next}.`,
+      body: `${f.money(toCents(s.amountCents))} will be charged on ${f.date(next)}.`,
       href: "/subscriptions",
       dedupeKey: `subscription:reminder:${s.id}:${next}`,
     });

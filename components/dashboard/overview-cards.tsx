@@ -37,11 +37,11 @@ export function SafeToSpendCard({ data, hasAccounts }: { data: SafeToSpendData; 
         </WidgetEmpty>
       ) : (
         <>
-          <p className={cn("tabular text-4xl font-semibold tracking-tight", data.shortfall > 0 ? "text-danger" : "text-foreground")}>{f.money(data.safeToSpend)}</p>
+          <p className={cn("tabular text-4xl font-semibold tracking-tight", data.shortfall > 0 ? "text-danger" : "text-foreground")}>{f.overview(data.safeToSpend)}</p>
           <p className="mt-1 text-[13px] text-muted-foreground">
             {data.safeToSpend > 0 ? (
               <>
-                About <span className="tabular font-medium text-foreground">{f.money(data.perDay)}</span> a day for {data.daysUntilPayday} {data.daysUntilPayday === 1 ? "day" : "days"}
+                About <span className="tabular font-medium text-foreground">{f.overview(data.perDay)}</span> a day for {data.daysUntilPayday} {data.daysUntilPayday === 1 ? "day" : "days"}
               </>
             ) : (
               "Nothing left to spend safely before payday."
@@ -88,15 +88,15 @@ export function CashCard({ data }: { data: { accounts: { id: string; name: strin
         </WidgetEmpty>
       ) : (
         <>
-          <p className="tabular text-3xl font-semibold tracking-tight">{f.money(spendable + savings)}</p>
+          <p className="tabular text-3xl font-semibold tracking-tight">{f.overview(spendable + savings)}</p>
           <div className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
             <div className="rounded-lg bg-subtle px-3 py-2">
               <p className="text-muted-foreground">Everyday</p>
-              <p className="tabular font-semibold">{f.money(spendable)}</p>
+              <p className="tabular font-semibold">{f.overview(spendable)}</p>
             </div>
             <div className="rounded-lg bg-subtle px-3 py-2">
               <p className="text-muted-foreground">Savings</p>
-              <p className="tabular font-semibold">{f.money(savings)}</p>
+              <p className="tabular font-semibold">{f.overview(savings)}</p>
             </div>
           </div>
           <ul className="mt-3 space-y-1.5 text-[13px]">
@@ -136,7 +136,7 @@ export function NetWorthCard({ data }: { data: { netWorth: number; assets: numbe
         <WidgetEmpty>Add accounts, loans and investments to track your net worth.</WidgetEmpty>
       ) : (
         <>
-          <p className="tabular text-3xl font-semibold tracking-tight">{f.money(data.netWorth)}</p>
+          <p className="tabular text-3xl font-semibold tracking-tight">{f.overview(data.netWorth)}</p>
           <div className="mt-1">
             <Change value={data.changeThisMonth} label="this month" />
           </div>
@@ -149,11 +149,11 @@ export function NetWorthCard({ data }: { data: { netWorth: number; assets: numbe
           <div className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
             <div>
               <p className="text-muted-foreground">Assets</p>
-              <p className="tabular font-semibold">{f.money(data.assets)}</p>
+              <p className="tabular font-semibold">{f.overview(data.assets)}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Debts</p>
-              <p className="tabular font-semibold">{f.money(data.liabilities)}</p>
+              <p className="tabular font-semibold">{f.overview(data.liabilities)}</p>
             </div>
           </div>
         </>
@@ -177,7 +177,7 @@ export function IncomeSpendingCard({ data }: { data: { label: string; income: nu
           <div key={row.label}>
             <div className="flex items-baseline justify-between text-[13px]">
               <span className="text-muted-foreground">{row.label}</span>
-              <span className="tabular text-base font-semibold">{f.money(row.value)}</span>
+              <span className="tabular text-base font-semibold">{f.overview(row.value)}</span>
             </div>
             <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
               <div className={cn("h-full rounded-full", row.cls)} style={{ width: `${Math.round((row.value / max) * 100)}%` }} />
@@ -188,7 +188,7 @@ export function IncomeSpendingCard({ data }: { data: { label: string; income: nu
       <div className="mt-4 border-t border-border pt-3">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-[13px] text-muted-foreground">{net >= 0 ? "Left over so far" : "Overspent so far"}</p>
-          <p className={cn("tabular text-xl font-semibold", net < 0 && "text-danger")}>{f.money(net)}</p>
+          <p className={cn("tabular text-xl font-semibold", net < 0 && "text-danger")}>{f.overview(net)}</p>
         </div>
         <p className="tabular mt-1 text-xs text-muted-foreground">
           {data.income > 0 ? `Savings rate ${Math.round(data.savingsRateBps / 100)}% · ` : ""}

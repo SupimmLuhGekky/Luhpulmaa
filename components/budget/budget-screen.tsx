@@ -34,7 +34,7 @@ export interface BudgetScreenProps {
   view: BudgetView | null;
   history: BudgetHistoryPoint[];
   budgets: BudgetSummary[];
-  defaults: { mode: "STANDARD" | "ZERO_BASED"; weekStartsOn: number; monthlyIncomeTargetCents: number | null; alertThresholds: number[] };
+  defaults: { mode: "STANDARD" | "ZERO_BASED"; weekStartsOn: number; monthlyIncomeTargetCents: number | null; alertThresholds: number[]; rolloverEnabled: boolean };
   openNew: boolean;
 }
 
@@ -359,6 +359,7 @@ export function BudgetScreen({ selection, view, history, budgets, defaults, open
         line={lineDialog.line}
         preset={lineDialog.preset}
         defaultThresholds={defaults.alertThresholds}
+        defaultRollover={defaults.rolloverEnabled}
       />
       <BudgetSettingsDialog
         open={settingsOpen}

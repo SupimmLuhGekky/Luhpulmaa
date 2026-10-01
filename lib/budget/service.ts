@@ -6,10 +6,11 @@ import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
 import { addDays, addMonthKey, endOfWeek, fromDbDate, monthKey, monthRange, startOfWeek, toDbDate, type LocalDate, type MonthKey } from "@/lib/dates";
 import { calculateBudgetRemaining, calculateRollover, calculateZeroBased, resolveBudgetAmount } from "@/lib/finance/calculations";
-import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
+import { toCents, type Cents } from "@/lib/finance/money";
 import { incomeSpendingSeries, spendingByCategory, spendingByCategoryPerMonth, totalIncome, totalSpending } from "@/lib/analytics/aggregates";
 import { runBudgetThresholdAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
+import { notificationFormat } from "@/lib/notifications/format";
 import { userPreferences } from "@/lib/settings/preferences";
 import { crossedThreshold } from "./thresholds";
 
@@ -136,6 +137,7 @@ export async function budgetDefaults(userId: string) {
     weekStartsOn: user.weekStartsOn,
     monthlyIncomeTargetCents: user.monthlyIncomeTargetCents === null ? null : toCents(user.monthlyIncomeTargetCents),
     alertThresholds: prefs.budgetAlertThresholds,
+    rolloverEnabled: prefs.budgetRolloverDefault,
   };
 }
 
@@ -372,6 +374,7 @@ export async function checkBudgetAlerts(userId: string, today: LocalDate) {
   if (!budget) return;
   const view = await budgetView(userId, budget.id);
   const prefs = await userPreferences(userId);
+  const f = await notificationFormat(userId);
   for (const line of view.lines) {
     if (line.available <= 0 && line.spent <= 0) continue;
     const usedPercent = Math.floor(line.usedBps / 100);
@@ -383,7 +386,7 @@ export async function checkBudgetAlerts(userId: string, today: LocalDate) {
         type: "BUDGET_WARNING",
         severity: crossed >= 100 ? "WARNING" : "INFO",
         title: crossed >= 100 ? `${line.name} budget is over` : `${line.name} budget is ${usedPercent}% used`,
-        body: `${formatCurrency(line.spent)} spent of ${formatCurrency(line.available)} this month. ${line.remaining >= 0 ? `${formatCurrency(line.remaining)} left.` : `${formatCurrency(-line.remaining)} over.`}`,
+        body: `${f.money(line.spent)} spent of ${f.money(line.available)} this month. ${line.remaining >= 0 ? `${f.money(line.remaining)} left.` : `${f.money(-line.remaining)} over.`}`,
         href: "/budget",
         dedupeKey: `budget:${line.id}:${month}:${crossed}`,
       });

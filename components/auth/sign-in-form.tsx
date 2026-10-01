@@ -41,6 +41,7 @@ export function SignInForm({ next, demoEnabled, reason }: { next?: string; demoE
   return (
     <div className="space-y-5">
       {reason === "session" ? <Notice tone="warning" title="Your session expired">Please sign in again to continue.</Notice> : null}
+      {reason === "deleted" ? <Notice tone="positive" title="Your account was deleted">Your profile and financial information were removed from Harbour.</Notice> : null}
       <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <FormError message={error} />
         <Field label="Email" error={form.formState.errors.email?.message}>
