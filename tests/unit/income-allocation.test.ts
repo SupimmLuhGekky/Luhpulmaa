@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { previewAllocation } from "@/lib/income/allocation";
 import { nextPayday, paydaysBetween, type PayScheduleSource } from "@/lib/income/schedule";
+import { dayOfMonthLabel, scheduleLabel } from "@/components/income/labels";
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -126,5 +127,18 @@ describe("nextPayday", () => {
   it("works for monthly pay at the end of the month", () => {
     const monthly: PayScheduleSource = { ...biweekly, frequency: "MONTHLY", lastPaidDate: "2026-08-31", nextExpectedDate: "2026-08-31" };
     expect(nextPayday(monthly, "2026-09-01")).toBe("2026-09-30");
+  });
+});
+
+describe("schedule labels", () => {
+  it("orders day-of-month suffixes correctly, with 31 as the last day", () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 30].map(dayOfMonthLabel)).toEqual(["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "30th"]);
+    expect(dayOfMonthLabel(31)).toBe("last day");
+  });
+
+  it("names semi-monthly days in order and falls back to the frequency", () => {
+    expect(scheduleLabel("SEMI_MONTHLY", [31, 15])).toBe("Twice a month · 15th and last day");
+    expect(scheduleLabel("BIWEEKLY", [15, 31])).toBe("Every 2 weeks");
+    expect(scheduleLabel("IRREGULAR", [])).toBe("Irregular");
   });
 });
