@@ -53,6 +53,8 @@ export async function createCategory(userId: string, input: z.infer<typeof categ
 export async function updateCategory(userId: string, id: string, input: Partial<z.infer<typeof categoryInputSchema>> & { isHidden?: boolean }) {
   const cat = await prisma.category.findFirst({ where: { id, userId } });
   if (!cat) throw notFound("Category");
+  // Built-in categories drive transfers, income and safe-to-spend, so their type is fixed.
+  if (cat.systemKey && input.kind && input.kind !== cat.kind) throw new AppError("FORBIDDEN", "Built-in categories keep their type.");
   const updated = await prisma.category.update({ where: { id }, data: input }).catch((error: unknown) => {
     if (isUniqueViolation(error)) throw new AppError("CONFLICT", `You already have a category called “${input.name}”.`);
     throw error;
@@ -108,10 +110,12 @@ export async function createSubcategory(userId: string, categoryId: string, inpu
 export async function updateSubcategory(userId: string, id: string, input: Partial<z.infer<typeof subcategoryInputSchema>>) {
   const sub = await prisma.subcategory.findFirst({ where: { id, userId } });
   if (!sub) throw notFound("Subcategory");
-  return prisma.subcategory.update({ where: { id }, data: input }).catch((error: unknown) => {
+  const updated = await prisma.subcategory.update({ where: { id }, data: input }).catch((error: unknown) => {
     if (isUniqueViolation(error)) throw new AppError("CONFLICT", `This category already has a subcategory called “${input.name}”.`);
     throw error;
   });
+  await audit(userId, "category.updated", { type: "category", id: sub.categoryId }, { subcategoryUpdated: id });
+  return updated;
 }
 
 export async function deleteSubcategory(userId: string, id: string) {
@@ -143,12 +147,15 @@ export async function createMerchantRule(userId: string, input: z.infer<typeof m
   const { normalizeMerchant } = await import("@/lib/transactions/normalize");
   const pattern = normalizeMerchant(input.pattern) || input.pattern.toLowerCase();
   if (!(await prisma.category.count({ where: { id: input.categoryId, userId } }))) throw notFound("Category");
+  if (input.subcategoryId && !(await prisma.subcategory.count({ where: { id: input.subcategoryId, userId, categoryId: input.categoryId } }))) throw notFound("Subcategory");
   await prisma.merchantRule.updateMany({ where: { userId, pattern }, data: { isActive: false } });
-  return prisma.merchantRule.upsert({
+  const rule = await prisma.merchantRule.upsert({
     where: { userId_pattern_categoryId: { userId, pattern, categoryId: input.categoryId } },
     update: { isActive: true, source: "USER_DEFINED", subcategoryId: input.subcategoryId ?? null },
     create: { userId, pattern, categoryId: input.categoryId, subcategoryId: input.subcategoryId ?? null, source: "USER_DEFINED", isActive: true, correctionCount: 0 },
   });
+  await audit(userId, "category.updated", { type: "merchant_rule", id: rule.id }, { pattern, categoryId: input.categoryId });
+  return rule;
 }
 
 export async function deleteMerchantRule(userId: string, id: string) {

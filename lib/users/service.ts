@@ -61,6 +61,7 @@ export async function getProfile(userId: string) {
     preferences: parsePreferences(u.preferences),
     isDemo: u.isDemo,
     createdAt: u.createdAt.toISOString(),
+    passwordChangedAt: u.passwordChangedAt?.toISOString() ?? null,
   };
 }
 

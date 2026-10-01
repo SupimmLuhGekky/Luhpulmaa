@@ -167,7 +167,7 @@ export async function fullExportZip(userId: string) {
 export interface ExportFile {
   filename: string;
   contentType: string;
-  body: string | Uint8Array;
+  body: string | Uint8Array<ArrayBuffer>;
 }
 
 /** Builds one download for the signed-in user and records it in the audit log. */

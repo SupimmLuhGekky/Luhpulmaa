@@ -17,6 +17,9 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, { label: string;
 
 export const NOTIFICATION_TYPES = Object.keys(NOTIFICATION_TYPE_LABELS) as NotificationType[];
 
+/** Types that always appear in the notification centre: account and security messages can't be muted there. */
+export const ALWAYS_IN_APP: readonly NotificationType[] = ["SYSTEM"];
+
 /** Channels a new account starts with: everything in-app, email only for security and sync problems. */
 export function defaultChannels(type: NotificationType) {
   return { inApp: true, email: type === "SYSTEM" || type === "SYNC_FAILURE", push: false, sms: false };

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { AppError } from "@/lib/api/errors";
 import { isEnabled } from "@/lib/flags";
 import { CHANNELS, channelAvailability, type ChannelName } from "./channels";
-import { defaultChannels, NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPES } from "./preferences";
+import { ALWAYS_IN_APP, defaultChannels, NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPES } from "./preferences";
 
 export interface NotifyInput {
   type: NotificationType;
@@ -24,7 +24,7 @@ export interface NotifyInput {
 export async function notify(userId: string, input: NotifyInput) {
   if (!isEnabled("ENABLE_NOTIFICATIONS")) return null;
   const pref = await prisma.notificationPreference.findUnique({ where: { userId_type: { userId, type: input.type } } });
-  const inApp = pref?.inApp ?? true;
+  const inApp = ALWAYS_IN_APP.includes(input.type) || (pref?.inApp ?? true);
   const emailOn = Boolean(pref?.email) && channelAvailability().email.available;
   if (!inApp && !emailOn) return null;
 
@@ -109,6 +109,7 @@ export async function updatePreference(
   type: NotificationType,
   channels: Partial<{ inApp: boolean; email: boolean; push: boolean; sms: boolean }>,
 ) {
+  if (channels.inApp === false && ALWAYS_IN_APP.includes(type)) throw new AppError("BAD_REQUEST", "Account and security messages always appear in Harbour.");
   const availability = channelAvailability();
   for (const [name, on] of Object.entries(channels) as [ChannelName, boolean | undefined][]) {
     if (on && !availability[name].available) throw new AppError("BAD_REQUEST", CHANNEL_UNAVAILABLE[name]);
@@ -124,6 +125,8 @@ export interface NotificationPreferenceRow {
   type: NotificationType;
   label: string;
   description: string;
+  /** In-app delivery can't be turned off for this type. */
+  inAppLocked: boolean;
   inApp: boolean;
   email: boolean;
   push: boolean;
@@ -137,6 +140,7 @@ export async function listPreferences(userId: string): Promise<NotificationPrefe
   return NOTIFICATION_TYPES.map((type) => {
     const row = byType.get(type);
     const channels = row ? { inApp: row.inApp, email: row.email, push: row.push, sms: row.sms } : defaultChannels(type);
-    return { type, ...NOTIFICATION_TYPE_LABELS[type], ...channels };
+    const inAppLocked = ALWAYS_IN_APP.includes(type);
+    return { type, ...NOTIFICATION_TYPE_LABELS[type], ...channels, inApp: inAppLocked || channels.inApp, inAppLocked };
   });
 }
