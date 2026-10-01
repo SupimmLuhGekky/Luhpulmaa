@@ -1,7 +1,9 @@
 name: Permission check
-on: workflow_dispatch
+on:
+  push:
+    branches: [ci-permission-check]
 jobs:
   noop:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
-      - run: echo ok
+      - run: sw_vers && uname -m && echo ok
