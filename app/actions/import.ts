@@ -7,16 +7,25 @@ import { AppError } from "@/lib/api/errors";
 import { ACCOUNT_TYPES, createManualAccount } from "@/lib/accounts/service";
 import { commitImport, previewImport, undoImport } from "@/lib/import/service";
 import { importPayloadSchema } from "@/lib/import/normalize";
+import { isEnabled } from "@/lib/flags";
 import { rateLimit, RATE_LIMITS } from "@/lib/security/rate-limit";
 
 function revalidateMoneyViews() {
   for (const path of ["/dashboard", "/transactions", "/transactions/import", "/accounts", "/budget", "/analytics", "/goals", "/forecast", "/net-worth", "/subscriptions", "/bills"]) revalidatePath(path);
 }
 
+function assertImportEnabled() {
+  if (!isEnabled("ENABLE_CSV_IMPORT")) throw new AppError("FEATURE_DISABLED", "CSV import is turned off on this server.");
+}
+
 /** Checks the mapped rows against what's already in the account (nothing is saved). */
-export const previewImportAction = authedAction(importPayloadSchema, async (payload, user) => previewImport(user.id, payload));
+export const previewImportAction = authedAction(importPayloadSchema, async (payload, user) => {
+  assertImportEnabled();
+  return previewImport(user.id, payload);
+});
 
 export const commitImportAction = authedAction(importPayloadSchema, async (payload, user) => {
+  assertImportEnabled();
   const rl = await rateLimit(`import:${user.id}`, RATE_LIMITS.import);
   if (!rl.allowed) throw new AppError("RATE_LIMITED", "That's a lot of imports in a short time. Please wait a little and try again.", { retryAfterSeconds: rl.retryAfterSeconds });
   const result = await commitImport(user.id, payload);
