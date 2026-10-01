@@ -192,7 +192,8 @@ function BalanceCard({ account, history, f }: { account: AccountView; history: B
   const good = change !== null && change > 0 !== owed;
 
   const facts: { label: string; value: string }[] = [];
-  if (CASH_TYPES.includes(account.type) && account.availableBalanceCents !== null) facts.push({ label: "Available", value: f.amount(account.availableBalanceCents, account.currency) });
+  // Only banks report an available balance; manual accounts just have their balance.
+  if (!account.isManual && CASH_TYPES.includes(account.type) && account.availableBalanceCents !== null) facts.push({ label: "Available", value: f.amount(account.availableBalanceCents, account.currency) });
   if (hasCreditLimit(account.type)) {
     if (util) facts.push({ label: "Available credit", value: f.amount(util.available, account.currency) });
     else if (account.availableBalanceCents !== null && !account.isManual) facts.push({ label: "Available credit", value: f.amount(account.availableBalanceCents, account.currency) });

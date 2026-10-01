@@ -123,7 +123,10 @@ export async function accountDetail(userId: string, id: string, timeZone: string
     if (f.type === "EXPENSE" || f.type === "REFUND") spending += -v;
   }
   const history = snapshots.map((s) => ({ date: fromDbDate(s.date), balance: toCents(s.balanceCents) }));
-  if (!history.length || history[history.length - 1].date !== today) history.push({ date: today, balance: account.currentBalanceCents });
+  // Today's point is always the current balance (manual transactions can move it after the day's snapshot).
+  const last = history[history.length - 1];
+  if (last?.date === today) last.balance = account.currentBalanceCents;
+  else history.push({ date: today, balance: account.currentBalanceCents });
   return { account, history, last90: { income, spending, count, from } };
 }
 

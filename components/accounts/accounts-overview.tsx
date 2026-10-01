@@ -213,7 +213,8 @@ function AccountRow({ account: a, f }: { account: AccountView; f: AccountFormat 
   // Phones drop the type (the icon and group already say it) to keep rows short.
   const meta = [a.institution?.name, typeLabel, sync].filter(Boolean).join(" · ");
   const shortMeta = [a.institution?.name, sync].filter(Boolean).join(" · ");
-  const showAvailable = CASH_TYPES.includes(a.type) && a.availableBalanceCents !== null && a.availableBalanceCents !== a.currentBalanceCents;
+  // Only banks report an available balance; for manual accounts it would just echo (or lag) the balance.
+  const showAvailable = !a.isManual && CASH_TYPES.includes(a.type) && a.availableBalanceCents !== null && a.availableBalanceCents !== a.currentBalanceCents;
   const pct = util ? Math.round(util.usedBps / 100) : 0;
   return (
     <li>
