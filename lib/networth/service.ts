@@ -1,12 +1,12 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { addDays, addMonths, fromDbDate, startOfMonth, startOfYear, toDbDate, type LocalDate } from "@/lib/dates";
+import { addDays, addMonths, fromDbDate, startOfMonth, startOfYear, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
 import { calculateNetWorth, type NetWorthResult } from "@/lib/finance/calculations";
 import { toCents } from "@/lib/finance/money";
 import { convertToBase } from "@/lib/finance/fx";
 import { isLiability, netWorthGroup } from "@/lib/accounts/types";
-import { accountContributions, type AccountBalanceInput } from "./contributions";
+import { accountContributions, netWorthRangeStart, type AccountBalanceInput, type NetWorthRange } from "./contributions";
 
 /** Current net worth from visible, active accounts marked "include in net worth". */
 export async function currentNetWorth(userId: string): Promise<NetWorthResult & { accountCount: number }> {
@@ -119,3 +119,31 @@ export async function netWorthAccounts(userId: string, since: LocalDate | null) 
   );
   return accountContributions(rows);
 }
+
+/**
+ * Everything the net-worth page shows for one history range: the summary, the daily
+ * history (its last point is always today's live figures, so the chart ends at the
+ * headline number), the change over the range, and each account's contribution and
+ * change since the first day shown.
+ */
+export async function netWorthOverview(userId: string, range: NetWorthRange) {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
+  const today = todayIn(user.timeZone);
+  const from = netWorthRangeStart(range, today);
+  const [summary, stored] = await Promise.all([netWorthSummary(userId, today), netWorthHistory(userId, from ?? "1900-01-01", today)]);
+  const history = stored.filter((p) => p.date < today);
+  history.push({ date: today, assets: summary.assets, liabilities: summary.liabilities, netWorth: summary.netWorth });
+  const first = history[0];
+  const hasHistory = history.length > 1;
+  const accounts = await netWorthAccounts(userId, hasHistory ? first.date : null);
+  return {
+    today,
+    range,
+    summary,
+    history,
+    change: hasHistory ? { from: first.date, amount: summary.netWorth - first.netWorth, assets: summary.assets - first.assets, liabilities: summary.liabilities - first.liabilities } : null,
+    accounts,
+  };
+}
+
+export type NetWorthOverview = Awaited<ReturnType<typeof netWorthOverview>>;
