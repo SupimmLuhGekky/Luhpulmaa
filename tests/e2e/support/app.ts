@@ -41,8 +41,9 @@ export async function signUp(page: Page, user: FictionalUser = fictionalUser()):
 }
 
 /**
- * Onboarding has no screens yet, so tests that need the app shell mark it finished in
- * the database (the shell only checks `onboardingCompletedAt`).
+ * Marks onboarding finished in the database, so tests about other screens skip the nine
+ * setup steps (the app only checks `onboardingCompletedAt`). onboarding.spec.ts walks
+ * through the steps themselves.
  */
 export async function finishOnboarding(email: string): Promise<void> {
   const prisma = new PrismaClient({ datasourceUrl: e2eDatabaseUrl() });
