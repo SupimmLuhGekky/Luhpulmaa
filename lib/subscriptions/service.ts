@@ -9,11 +9,12 @@ import { monthlyEquivalent, yearlyEquivalent } from "@/lib/finance/frequency";
 import { formatCurrency, toCents } from "@/lib/finance/money";
 import { notify } from "@/lib/notifications/service";
 import { detectPriceChange } from "./price";
+import { SUBSCRIPTION_FREQUENCIES } from "./upcoming";
 
 export const subscriptionInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   amountCents: z.number().int().positive().max(10_000_000),
-  frequency: z.enum(["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"]).default("MONTHLY"),
+  frequency: z.enum(SUBSCRIPTION_FREQUENCIES).default("MONTHLY"),
   nextChargeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   accountId: z.string().uuid().nullable().optional(),
