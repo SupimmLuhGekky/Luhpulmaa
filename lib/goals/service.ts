@@ -1,5 +1,5 @@
 import "server-only";
-import type { ContributionKind, ContributionSource, Priority, Prisma } from "@prisma/client";
+import type { AccountType, ContributionKind, ContributionSource, Priority, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
@@ -151,6 +151,16 @@ export async function addContribution(
     const before = toCents(goal.currentCents);
     if (input.amountCents < 0 && before + input.amountCents < 0) {
       throw new AppError("VALIDATION_FAILED", `You can't take out more than the ${formatCurrency(before)} set aside for this goal.`);
+    }
+    if (input.amountCents < 0) {
+      // Planned and actual are tracked apart, so a withdrawal can't push either one below zero.
+      const planned = input.kind === "PLANNED_ALLOCATION";
+      const kinds: ContributionKind[] = planned ? ["PLANNED_ALLOCATION"] : ["USER_REPORTED_TRANSFER", "PROVIDER_TRANSFER"];
+      const sum = await tx.goalContribution.aggregate({ where: { goalId, kind: { in: kinds } }, _sum: { amountCents: true } });
+      const available = toCents(sum._sum.amountCents);
+      if (available + input.amountCents < 0) {
+        throw new AppError("VALIDATION_FAILED", planned ? `Only ${formatCurrency(Math.max(0, available))} is planned for this goal, so you can't take out more.` : `Only ${formatCurrency(Math.max(0, available))} was actually moved to this goal, so you can't take out more.`);
+      }
     }
     const contribution = await tx.goalContribution.create({
       data: {
@@ -326,6 +336,22 @@ export async function goalDetail(userId: string, goalId: string, timeZone: strin
     growth: growthSeries(contributions, { startAt: createdOn, extendTo: today }),
     today,
   };
+}
+
+export interface GoalAccountOption {
+  id: string;
+  name: string;
+  type: AccountType;
+  mask: string | null;
+}
+
+/** Accounts a goal can point at (where its money is kept): open, visible asset accounts. */
+export async function goalAccountOptions(userId: string): Promise<GoalAccountOption[]> {
+  return prisma.account.findMany({
+    where: { userId, status: { not: "CLOSED" }, isHidden: false, type: { in: ["SAVINGS", "CHEQUING", "CASH", "INVESTMENT", "OTHER_ASSET"] } },
+    orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    select: { id: true, name: true, type: true, mask: true },
+  });
 }
 
 export async function checkGoalDeadlines(userId: string, today: LocalDate) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { growthSeries, isActualKind, totalsByKind } from "@/lib/goals/contributions";
+import { dayNumber, fromDayNumber, timeTicks } from "@/lib/goals/timeline";
 
 describe("planned vs actual", () => {
   it("only planned allocations count as planned", () => {
@@ -53,5 +54,26 @@ describe("growthSeries", () => {
       { date: "2026-09-30", actual: 0, planned: 0, total: 0 },
     ]);
     expect(growthSeries([])).toEqual([]);
+  });
+});
+
+describe("time axis", () => {
+  it("turns dates into day numbers and back", () => {
+    expect(dayNumber("1970-01-02")).toBe(1);
+    expect(dayNumber("2026-03-09") - dayNumber("2026-03-07")).toBe(2); // across the DST change
+    expect(fromDayNumber(dayNumber("2028-02-29"))).toBe("2028-02-29");
+  });
+
+  it("puts long ranges on month starts with a steady rhythm", () => {
+    expect(timeTicks("2026-01-15", "2026-06-20")).toEqual({ ticks: ["2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01", "2026-06-01"], unit: "month" });
+    // 20 months → quarterly ticks aligned to Jan/Apr/Jul/Oct, at most 5… then half-yearly
+    expect(timeTicks("2025-02-10", "2026-09-30").ticks).toEqual(["2025-07-01", "2026-01-01", "2026-07-01"]);
+    expect(timeTicks("2025-12-20", "2026-03-10", 4).ticks).toEqual(["2026-01-01", "2026-02-01", "2026-03-01"]);
+  });
+
+  it("spreads short ranges over evenly spaced days", () => {
+    expect(timeTicks("2026-09-01", "2026-09-29")).toEqual({ ticks: ["2026-09-01", "2026-09-08", "2026-09-15", "2026-09-22", "2026-09-29"], unit: "day" });
+    expect(timeTicks("2026-09-29", "2026-09-30").ticks).toEqual(["2026-09-29", "2026-09-30"]);
+    expect(timeTicks("2026-09-30", "2026-09-30").ticks).toEqual(["2026-09-30"]);
   });
 });
