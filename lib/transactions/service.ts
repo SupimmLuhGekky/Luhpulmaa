@@ -1,10 +1,11 @@
 import "server-only";
-import type { CategoryKind, Prisma, TransactionType } from "@prisma/client";
+import type { AccountType, CategoryKind, Prisma, TransactionType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
-import { fromDbDate, toDbDate } from "@/lib/dates";
+import { fromDbDate, todayIn, toDbDate } from "@/lib/dates";
 import { toCents } from "@/lib/finance/money";
+import { recordNetWorthSnapshot } from "@/lib/networth/service";
 import { LEARNING_THRESHOLD } from "./categorization";
 import { ingestTransactions } from "./ingest";
 import { normalizeMerchant } from "./normalize";
@@ -13,6 +14,28 @@ import type { z } from "zod";
 import type { createTransactionSchema, updateTransactionSchema } from "./schemas";
 
 const LIABILITY_TYPES = new Set(["CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "OTHER_LIABILITY"]);
+
+/**
+ * Moves a manual account's balance by a transaction's effect and keeps today's balance
+ * history and net worth in step. (Connected accounts' balances come from the bank.)
+ */
+async function moveManualBalance(userId: string, account: { id: string; type: AccountType }, deltaCents: number) {
+  if (deltaCents === 0) return;
+  const updated = await prisma.account.update({
+    where: { id: account.id },
+    data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(account.type) ? -deltaCents : deltaCents } },
+    select: { currentBalanceCents: true },
+  });
+  const { timeZone } = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
+  const today = todayIn(timeZone);
+  const balanceCents = toCents(updated.currentBalanceCents);
+  await prisma.accountBalanceSnapshot.upsert({
+    where: { accountId_date: { accountId: account.id, date: toDbDate(today) } },
+    update: { balanceCents },
+    create: { userId, accountId: account.id, date: toDbDate(today), balanceCents },
+  });
+  await recordNetWorthSnapshot(userId, today);
+}
 
 export const transactionListSelect = {
   id: true,
@@ -230,10 +253,8 @@ export async function createManualTransaction(userId: string, input: z.infer<typ
   }
   if (input.tags?.length) await setTags(userId, id, input.tags);
   // Manual transactions on manual accounts move the balance; connected balances come from the bank.
-  const acct = await prisma.account.findUniqueOrThrow({ where: { id: input.accountId }, select: { isManual: true, type: true } });
-  if (acct.isManual) {
-    await prisma.account.update({ where: { id: input.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(acct.type) ? -input.amountCents : input.amountCents } } });
-  }
+  const acct = await prisma.account.findUniqueOrThrow({ where: { id: input.accountId }, select: { id: true, isManual: true, type: true } });
+  if (acct.isManual) await moveManualBalance(userId, acct, input.amountCents);
   await audit(userId, "transaction.created", { type: "transaction", id }, { manual: true });
   return getTransaction(userId, id);
 }
@@ -311,11 +332,8 @@ export async function updateTransaction(userId: string, id: string, input: z.inf
   await prisma.transaction.update({ where: { id }, data });
   // A corrected amount on a manual transaction moves a manual account's balance by the difference.
   if (input.amountCents !== undefined && input.amountCents !== toCents(existing.amountCents)) {
-    const acct = await prisma.account.findUniqueOrThrow({ where: { id: existing.accountId }, select: { isManual: true, type: true } });
-    if (acct.isManual) {
-      const delta = input.amountCents - toCents(existing.amountCents);
-      await prisma.account.update({ where: { id: existing.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(acct.type) ? -delta : delta } } });
-    }
+    const acct = await prisma.account.findUniqueOrThrow({ where: { id: existing.accountId }, select: { id: true, isManual: true, type: true } });
+    if (acct.isManual) await moveManualBalance(userId, acct, input.amountCents - toCents(existing.amountCents));
   }
   if (input.tags) await setTags(userId, id, input.tags);
   await audit(userId, "transaction.updated", { type: "transaction", id }, { fields: Object.keys(input) });
@@ -323,14 +341,11 @@ export async function updateTransaction(userId: string, id: string, input: z.inf
 }
 
 export async function deleteTransaction(userId: string, id: string) {
-  const t = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true, isManual: true, amountCents: true, accountId: true, account: { select: { isManual: true, type: true } } } });
+  const t = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true, isManual: true, amountCents: true, accountId: true, account: { select: { id: true, isManual: true, type: true } } } });
   if (!t) throw notFound("Transaction");
   if (!t.isManual) throw new AppError("FORBIDDEN", "Imported transactions can't be deleted. You can exclude them from budgets and reports instead.");
   await prisma.transaction.delete({ where: { id } });
-  if (t.account.isManual) {
-    const amount = toCents(t.amountCents);
-    await prisma.account.update({ where: { id: t.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(t.account.type) ? amount : -amount } } });
-  }
+  if (t.account.isManual) await moveManualBalance(userId, t.account, -toCents(t.amountCents));
   await audit(userId, "transaction.deleted", { type: "transaction", id });
 }
 

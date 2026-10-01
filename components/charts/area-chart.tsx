@@ -32,7 +32,7 @@ export function AreaChart({ label, data, xKey, series, height = 240, formatX, re
     <ChartShell
       label={label}
       height={height}
-      table={{ columns: [xKey, ...series.map((s) => s.label)], rows: data.map((d) => [fx(String(d[xKey])), ...series.map((s) => f.money(Number(d[s.key] ?? 0)))]) }}
+      table={{ columns: [xKey.charAt(0).toUpperCase() + xKey.slice(1), ...series.map((s) => s.label)], rows: data.map((d) => [fx(String(d[xKey])), ...series.map((s) => f.money(Number(d[s.key] ?? 0)))]) }}
     >
       <ResponsiveContainer width="100%" height="100%">
         <RAreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
