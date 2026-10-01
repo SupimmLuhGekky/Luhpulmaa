@@ -12,6 +12,8 @@ import type { TransactionFilters } from "./schemas";
 import type { z } from "zod";
 import type { createTransactionSchema, updateTransactionSchema } from "./schemas";
 
+const LIABILITY_TYPES = new Set(["CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "OTHER_LIABILITY"]);
+
 export const transactionListSelect = {
   id: true,
   date: true,
@@ -230,8 +232,7 @@ export async function createManualTransaction(userId: string, input: z.infer<typ
   // Manual transactions on manual accounts move the balance; connected balances come from the bank.
   const acct = await prisma.account.findUniqueOrThrow({ where: { id: input.accountId }, select: { isManual: true, type: true } });
   if (acct.isManual) {
-    const liability = ["CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "OTHER_LIABILITY"].includes(acct.type);
-    await prisma.account.update({ where: { id: input.accountId }, data: { currentBalanceCents: { increment: liability ? -input.amountCents : input.amountCents } } });
+    await prisma.account.update({ where: { id: input.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(acct.type) ? -input.amountCents : input.amountCents } } });
   }
   await audit(userId, "transaction.created", { type: "transaction", id }, { manual: true });
   return getTransaction(userId, id);
@@ -309,6 +310,14 @@ export async function updateTransaction(userId: string, id: string, input: z.inf
     if (input.amountCents !== undefined) data.amountCents = input.amountCents;
   }
   await prisma.transaction.update({ where: { id }, data });
+  // A corrected amount on a manual transaction moves a manual account's balance by the difference.
+  if (input.amountCents !== undefined && input.amountCents !== toCents(existing.amountCents)) {
+    const acct = await prisma.account.findUniqueOrThrow({ where: { id: existing.accountId }, select: { isManual: true, type: true } });
+    if (acct.isManual) {
+      const delta = input.amountCents - toCents(existing.amountCents);
+      await prisma.account.update({ where: { id: existing.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(acct.type) ? -delta : delta } } });
+    }
+  }
   if (input.tags) await setTags(userId, id, input.tags);
   await audit(userId, "transaction.updated", { type: "transaction", id }, { fields: Object.keys(input) });
   return { transaction: await getTransaction(userId, id), learned: learned?.learned ?? false, appliedToOthers };
@@ -320,21 +329,31 @@ export async function deleteTransaction(userId: string, id: string) {
   if (!t.isManual) throw new AppError("FORBIDDEN", "Imported transactions can't be deleted. You can exclude them from budgets and reports instead.");
   await prisma.transaction.delete({ where: { id } });
   if (t.account.isManual) {
-    const liability = ["CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "OTHER_LIABILITY"].includes(t.account.type);
     const amount = toCents(t.amountCents);
-    await prisma.account.update({ where: { id: t.accountId }, data: { currentBalanceCents: { increment: liability ? amount : -amount } } });
+    await prisma.account.update({ where: { id: t.accountId }, data: { currentBalanceCents: { increment: LIABILITY_TYPES.has(t.account.type) ? amount : -amount } } });
   }
   await audit(userId, "transaction.deleted", { type: "transaction", id });
 }
 
+/** Re-categorises many transactions at once, keeping type and transfer flags consistent with the category (as a single edit does). */
 export async function bulkUpdateCategory(userId: string, ids: string[], categoryId: string | null) {
-  await assertCategory(userId, categoryId);
-  const res = await prisma.transaction.updateMany({
-    where: { userId, id: { in: ids } },
-    data: { categoryId, subcategoryId: null, categorizedBy: categoryId ? "USER" : "UNCATEGORIZED", categorizedByLabel: categoryId ? "Changed by you" : null, categorizedByRuleId: null },
-  });
-  await audit(userId, "transaction.updated", { type: "transaction" }, { bulk: true, count: res.count });
-  return res.count;
+  const cat = await assertCategory(userId, categoryId);
+  const where: Prisma.TransactionWhereInput = { userId, id: { in: ids } };
+  const base = { categoryId, subcategoryId: null, categorizedBy: categoryId ? ("USER" as const) : ("UNCATEGORIZED" as const), categorizedByLabel: categoryId ? "Changed by you" : null, categorizedByRuleId: null };
+  let count: number;
+  if (!cat) {
+    count = (await prisma.transaction.updateMany({ where, data: base })).count;
+  } else if (cat.kind === "TRANSFER") {
+    count = (await prisma.transaction.updateMany({ where, data: { ...base, isTransfer: true, type: "TRANSFER" } })).count;
+  } else {
+    const [inflows, outflows] = await prisma.$transaction([
+      prisma.transaction.updateMany({ where: { ...where, amountCents: { gt: 0 } }, data: { ...base, isTransfer: false, type: cat.kind === "INCOME" ? "INCOME" : "REFUND" } }),
+      prisma.transaction.updateMany({ where: { ...where, amountCents: { lt: 0 } }, data: { ...base, isTransfer: false, type: "EXPENSE" } }),
+    ]);
+    count = inflows.count + outflows.count;
+  }
+  await audit(userId, "transaction.updated", { type: "transaction" }, { bulk: true, count });
+  return count;
 }
 
 export async function listTags(userId: string) {

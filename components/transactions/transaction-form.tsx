@@ -15,6 +15,7 @@ import { Field, FormError } from "@/components/shared/field";
 import { useFormat } from "@/components/providers/format-provider";
 import { createTransactionAction } from "@/app/actions/transactions";
 import type { QuickAddOptions } from "@/app/actions/shell";
+import { CategoryOptions } from "./category-options";
 
 const schema = z.object({
   direction: z.enum(["out", "in"]),
@@ -55,12 +56,6 @@ export function TransactionForm({ options, defaultAccountId, onDone, onCancel }:
   });
   const errors = form.formState.errors;
   const direction = form.watch("direction");
-
-  const grouped = React.useMemo(() => {
-    const order = direction === "in" ? ["INCOME", "TRANSFER", "EXPENSE"] : ["EXPENSE", "TRANSFER", "INCOME"];
-    const labels: Record<string, string> = { EXPENSE: "Spending", INCOME: "Income", TRANSFER: "Transfers" };
-    return order.map((kind) => ({ kind, label: labels[kind], items: options.categories.filter((c) => c.kind === kind) })).filter((g) => g.items.length);
-  }, [direction, options.categories]);
 
   const onSubmit = form.handleSubmit(async (v) => {
     setError(null);
@@ -130,15 +125,7 @@ export function TransactionForm({ options, defaultAccountId, onDone, onCancel }:
         </Field>
         <Field label="Category" hint="Leave empty to categorise automatically.">
           <Select {...form.register("categoryId")} placeholder="Automatic">
-            {grouped.map((g) => (
-              <optgroup key={g.kind} label={g.label}>
-                {g.items.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
+            <CategoryOptions categories={options.categories} direction={direction} />
           </Select>
         </Field>
       </div>

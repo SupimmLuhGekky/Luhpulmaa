@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bankCategoryToSystemKey } from "@/lib/import/bank-categories";
-import { guessMapping, importMappingSchema, normalizeImportRows, parseImportDate, suggestInvertAmounts } from "@/lib/import/normalize";
+import { detectDateFormat, guessMapping, importMappingSchema, looksLikeHeader, normalizeImportRows, parseImportDate, suggestInvertAmounts } from "@/lib/import/normalize";
 
 const mapping = (m: Record<string, unknown>) => importMappingSchema.parse(m);
 
@@ -166,5 +166,27 @@ describe("bankCategoryToSystemKey", () => {
     expect(bankCategoryToSystemKey("Miscellaneous")).toBeNull();
     expect(bankCategoryToSystemKey("")).toBeNull();
     expect(bankCategoryToSystemKey(null)).toBeNull();
+  });
+});
+
+describe("detectDateFormat", () => {
+  it("reads month-first files consistently", () => {
+    const rows = [["Date", "Amount"], ["09/05/2026", "-1"], ["09/30/2026", "-2"]];
+    expect(detectDateFormat(rows, 0, true)).toBe("MM/DD/YYYY");
+  });
+  it("reads day-first files consistently", () => {
+    const rows = [["05/09/2026", "-1"], ["30/09/2026", "-2"]];
+    expect(detectDateFormat(rows, 0, false)).toBe("DD/MM/YYYY");
+  });
+  it("leaves ISO and ambiguous-only files on auto", () => {
+    expect(detectDateFormat([["2026-09-05"], ["2026-09-30"]], 0, false)).toBe("auto");
+    expect(detectDateFormat([["01/02/2026"], ["03/04/2026"]], 0, false)).toBe("auto");
+  });
+});
+
+describe("looksLikeHeader", () => {
+  it("detects header rows", () => {
+    expect(looksLikeHeader(["Date", "Description", "Amount"])).toBe(true);
+    expect(looksLikeHeader(["2026-09-30", "Metro", "-12.50"])).toBe(false);
   });
 });

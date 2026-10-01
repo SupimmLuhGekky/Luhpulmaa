@@ -24,6 +24,7 @@ export type AuditAction =
   | "transaction.updated"
   | "transaction.deleted"
   | "transaction.imported"
+  | "transaction.import_undone"
   | "category.created"
   | "category.updated"
   | "category.deleted"

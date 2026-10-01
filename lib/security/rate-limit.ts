@@ -56,6 +56,7 @@ export const RATE_LIMITS = {
   verifyEmail: { limit: 10, windowMs: 60 * 60_000 },
   sync: { limit: 20, windowMs: 60 * 60_000 },
   export: { limit: 30, windowMs: 60 * 60_000 },
+  import: { limit: 30, windowMs: 60 * 60_000 },
   assistant: { limit: 30, windowMs: 60 * 60_000 },
   api: { limit: 300, windowMs: 60_000 },
 } satisfies Record<string, RateLimitRule>;

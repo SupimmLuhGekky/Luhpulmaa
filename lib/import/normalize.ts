@@ -246,3 +246,30 @@ export function suggestInvertAmounts(rows: string[][], mapping: Partial<ImportMa
   if (amounts.length < 3) return false;
   return amounts.filter((a) => a > 0).length / amounts.length >= 0.7;
 }
+
+/**
+ * Picks one numeric date order for the whole file. Row-by-row guessing could read
+ * "09/05" as May 9 on one line and "09/30" as September 30 on the next, so any
+ * unambiguous date (a part above 12) decides for every row. Ambiguous files fall
+ * back to day-first, which most Canadian bank exports use; the user can override.
+ */
+export function detectDateFormat(rows: string[][], dateColumn: number, hasHeader: boolean): DateFormat {
+  let dayFirst = 0;
+  let monthFirst = 0;
+  for (const cells of hasHeader ? rows.slice(1) : rows) {
+    const m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:\s|$)/.exec((cells[dateColumn] ?? "").trim());
+    if (!m) continue;
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a > 12 && b <= 12) dayFirst++;
+    else if (b > 12 && a <= 12) monthFirst++;
+  }
+  if (monthFirst > dayFirst) return "MM/DD/YYYY";
+  if (dayFirst > 0) return "DD/MM/YYYY";
+  return "auto";
+}
+
+/** A first row with no date in any cell is treated as a header row. */
+export function looksLikeHeader(firstRow: string[]): boolean {
+  return firstRow.length > 0 && !firstRow.some((c) => parseImportDate(c, "auto") !== null);
+}
