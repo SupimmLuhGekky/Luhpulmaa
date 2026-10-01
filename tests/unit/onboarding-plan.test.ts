@@ -4,6 +4,7 @@ import {
   ONBOARDING_STEP_COUNT,
   SUGGESTED_SAVINGS_BPS,
   essentialMonthlyCents,
+  monthlyToReach,
   progressAfter,
   resolveStep,
   roundToTenDollars,
@@ -132,5 +133,26 @@ describe("suggestGoals", () => {
   it("never invents a target without the person's numbers", () => {
     const goals = suggestGoals({ essentialMonthlyCents: null });
     expect(goals.every((g) => g.targetCents === null)).toBe(true);
+  });
+});
+
+describe("monthly amount to reach a goal", () => {
+  it("divides what's left by the whole months until the deadline", () => {
+    expect(monthlyToReach({ targetCents: 1_200_000, today: "2026-10-01", deadline: "2027-10-01" })).toEqual({ months: 12, monthlyCents: 100_000 });
+    expect(monthlyToReach({ targetCents: 1_200_000, savedCents: 300_000, today: "2026-10-01", deadline: "2027-10-01" })).toEqual({ months: 12, monthlyCents: 75_000 });
+  });
+
+  it("doesn't count a partial last month and rounds up to the cent", () => {
+    // Oct 20 → Jan 10 is two whole months.
+    expect(monthlyToReach({ targetCents: 100_001, today: "2026-10-20", deadline: "2027-01-10" })).toEqual({ months: 2, monthlyCents: 50_001 });
+    // Less than a month away: everything this month.
+    expect(monthlyToReach({ targetCents: 50_000, today: "2026-10-01", deadline: "2026-10-15" })).toEqual({ months: 1, monthlyCents: 50_000 });
+  });
+
+  it("needs a future deadline and reports goals already reached", () => {
+    expect(monthlyToReach({ targetCents: 50_000, today: "2026-10-01", deadline: null })).toBeNull();
+    expect(monthlyToReach({ targetCents: 50_000, today: "2026-10-01", deadline: "2026-10-01" })).toBeNull();
+    expect(monthlyToReach({ targetCents: 50_000, today: "2026-10-01", deadline: "2026-09-01" })).toBeNull();
+    expect(monthlyToReach({ targetCents: 50_000, savedCents: 60_000, today: "2026-10-01", deadline: "2027-01-01" })).toEqual({ months: 0, monthlyCents: 0 });
   });
 });

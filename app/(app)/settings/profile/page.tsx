@@ -4,6 +4,7 @@ import { isDesktop } from "@/lib/config/env";
 import { COMMON_TIME_ZONES, todayIn } from "@/lib/dates";
 import { isEnabled } from "@/lib/flags";
 import { CANADIAN_PROVINCES, getProfile } from "@/lib/users/service";
+import { AppGoalsForm } from "@/components/settings/app-goals-form";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { RegionForm } from "@/components/settings/region-form";
 import { SettingsPageHeader } from "@/components/settings/settings-ui";
@@ -28,6 +29,7 @@ export default async function ProfileSettingsPage() {
         today={todayIn(profile.timeZone)}
         multiCurrency={isEnabled("ENABLE_MULTI_CURRENCY")}
       />
+      <AppGoalsForm initial={profile.preferences.appGoals} />
     </div>
   );
 }

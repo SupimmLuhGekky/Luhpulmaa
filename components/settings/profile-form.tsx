@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Field, FormError } from "@/components/shared/field";
+import { FieldSlot } from "@/components/settings/field-slot";
 import { updateProfileAction } from "@/app/actions/settings";
 import { resendVerificationAction } from "@/app/actions/auth";
 import { SettingsSection } from "./settings-ui";
@@ -134,20 +135,25 @@ export function ProfileForm({ profile, provinces, sendsEmail }: ProfileFormProps
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Country" error={errors.country?.message}>
-              <Controller
-                control={form.control}
-                name="country"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onChange={(e) => {
-                      field.onChange(e.target.value);
-                      if (e.target.value !== "CA") form.setValue("province", "", { shouldDirty: true });
-                    }}
-                    options={[
-                      { value: "CA", label: "Canada" },
-                      { value: "US", label: "United States" },
-                    ]}
+              <FieldSlot
+                render={(a) => (
+                  <Controller
+                    control={form.control}
+                    name="country"
+                    render={({ field }) => (
+                      <Select
+                        {...a}
+                        value={field.value}
+                        onChange={(e) => {
+                          field.onChange(e.target.value);
+                          if (e.target.value !== "CA") form.setValue("province", "", { shouldDirty: true });
+                        }}
+                        options={[
+                          { value: "CA", label: "Canada" },
+                          { value: "US", label: "United States" },
+                        ]}
+                      />
+                    )}
                   />
                 )}
               />

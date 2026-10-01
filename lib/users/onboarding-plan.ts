@@ -6,6 +6,7 @@
  * derived only from what the person entered (income) or their own transactions.
  */
 import { ESSENTIAL_CATEGORY_KEYS } from "@/lib/categories/defaults";
+import type { LocalDate } from "@/lib/dates";
 import { percentOf, type Cents } from "@/lib/finance/money";
 
 export const ONBOARDING_STEPS = [
@@ -26,6 +27,11 @@ export const ONBOARDING_STEP_COUNT = ONBOARDING_STEPS.length;
 /** 1-based step number of a step key. */
 export function stepNumber(key: OnboardingStepKey): number {
   return ONBOARDING_STEPS.findIndex((s) => s.key === key) + 1;
+}
+
+/** URL of a setup step. */
+export function onboardingStepHref(step: number): string {
+  return `/onboarding?step=${clampStep(step)}`;
 }
 
 export function stepKey(step: number): OnboardingStepKey {
@@ -214,4 +220,21 @@ export function suggestGoals(input: { essentialMonthlyCents: Cents | null }): Go
     { key: "home", name: "Home down payment", icon: "home", color: "#6366f1", targetCents: null, hint: "Saving toward a first home." },
     { key: "education", name: "Education", icon: "graduation-cap", color: "#3b82f6", targetCents: null, hint: "Courses, tuition or a program." },
   ];
+}
+
+/**
+ * What to plan each month to reach a goal by its deadline: the amount still to save
+ * divided by the whole months left (at least one), rounded up to the cent. Null without
+ * a deadline in the future.
+ */
+export function monthlyToReach(input: { targetCents: Cents; savedCents?: Cents | null; today: LocalDate; deadline: LocalDate | null | undefined }): { months: number; monthlyCents: Cents } | null {
+  const { today, deadline } = input;
+  if (!deadline || deadline <= today) return null;
+  const remaining = input.targetCents - (input.savedCents ?? 0);
+  if (remaining <= 0) return { months: 0, monthlyCents: 0 };
+  const [y1, m1, d1] = today.split("-").map(Number);
+  const [y2, m2, d2] = deadline.split("-").map(Number);
+  // Whole months only: a partial last month doesn't count, so the plan is never too small.
+  const months = Math.max(1, (y2 - y1) * 12 + (m2 - m1) - (d2 < d1 ? 1 : 0));
+  return { months, monthlyCents: Math.ceil(remaining / months) };
 }
