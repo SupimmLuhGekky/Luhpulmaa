@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MockProvider } from "@/lib/banking/providers/mock";
 import { generateMockTransactions, hashString, MOCK_INSTITUTIONS, mockAccountSpecs, mockOpeningDate, prng } from "@/lib/banking/providers/mock-data";
 import { ProviderError } from "@/lib/banking/types";
-import { addDays, isLocalDate } from "@/lib/dates";
+import { addDays, addMonths, isLocalDate } from "@/lib/dates";
 
 const TODAY = "2026-10-01";
 const USER = "user-fictional-1";
@@ -74,10 +74,19 @@ describe("mock data generator", () => {
     expect(chequingSide?.amountCents).toBe(-charged);
   });
 
-  it("pays every two weeks starting four days after the history start", () => {
+  it("pays every second Friday", () => {
     const pay = generateMockTransactions(seed, anchor, anchor, TODAY).filter((r) => r.description === "HARBOURFRONT GRILL PAYROLL DEP").map((r) => r.date);
-    expect(pay[0]).toBe(addDays(anchor, 4));
+    expect(pay.length).toBeGreaterThanOrEqual(12);
+    expect(pay[0] < addDays(anchor, 14)).toBe(true);
+    pay.forEach((d) => expect(new Date(`${d}T12:00:00Z`).getUTCDay()).toBe(5));
     pay.slice(1).forEach((d, i) => expect(d).toBe(addDays(pay[i], 14)));
+  });
+
+  it("replays the same history when the same bank is linked again later", () => {
+    // Re-linking five days later moves the history start, but not what happened on any given day.
+    const later = addDays(anchor, 5);
+    const from = addMonths(later, 1);
+    expect(generateMockTransactions(seed, later, from, TODAY)).toEqual(generateMockTransactions(seed, anchor, from, TODAY));
   });
 
   it("describes three fictional accounts and four fictional institutions", () => {
