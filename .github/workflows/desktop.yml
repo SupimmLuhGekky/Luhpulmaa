@@ -1,0 +1,208 @@
+# Builds Harbour for Mac (Apple silicon and Intel), signs it ad hoc, packages a DMG,
+# installs the app from that DMG and smoke-tests it on the runner. Tags `desktop-v<version>`
+# also publish a GitHub release with both DMGs. See docs/DESKTOP.md.
+name: Desktop app
+
+on:
+  push:
+    branches: [desktop]
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  mac:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Check runner and version
+        id: meta
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          sw_vers
+          echo "Node.js $(node --version) on $(uname -m)"
+          arch="$(node -p process.arch)"
+          if [ "$arch" != "$EXPECTED_ARCH" ]; then
+            echo "::error::Expected an $EXPECTED_ARCH runner, got $arch."
+            exit 1
+          fi
+          version="$(node -p "require('./desktop/package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "desktop-v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match desktop/package.json version $version (expected desktop-v$version)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dmg=Harbour-$version-$arch.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix desktop --no-audit --no-fund
+
+      - name: Type-check and unit-test the desktop shell
+        run: |
+          npm run desktop:typecheck
+          npm run desktop:test
+
+      - name: Build the app
+        run: npm run desktop:build
+
+      - name: Sign (ad hoc, inside-out)
+        run: npm run desktop:sign
+
+      - name: Create the DMG
+        run: npm run desktop:dmg
+
+      - name: Install from the DMG and verify the bundle
+        env:
+          DMG: desktop/out/${{ steps.meta.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          mnt="$RUNNER_TEMP/harbour-dmg"
+          mkdir -p "$mnt"
+          hdiutil attach "$DMG" -nobrowse -noautoopen -readonly -mountpoint "$mnt"
+          ls -la "$mnt"
+          test "$(readlink "$mnt/Applications")" = "/Applications"
+          rm -rf /Applications/Harbour.app
+          ditto "$mnt/Harbour.app" /Applications/Harbour.app
+          hdiutil detach "$mnt"
+          codesign --verify --deep --strict --verbose=2 /Applications/Harbour.app
+          node desktop/scripts/check-bundle.mjs /Applications/Harbour.app
+          if find /Applications/Harbour.app -name '.env*' | grep .; then
+            echo "::error::.env files found in the app bundle."
+            exit 1
+          fi
+          # Expected to say "rejected": the app is signed ad hoc, not notarized (see docs/DESKTOP.md).
+          spctl --assess --type execute --verbose=4 /Applications/Harbour.app || true
+
+      - name: Smoke test (first launch)
+        env:
+          SCREENSHOT: desktop/out/smoke/harbour-macos-${{ matrix.arch }}-first-launch.png
+        run: node desktop/scripts/smoke.mjs --app=/Applications/Harbour.app --screenshot="$SCREENSHOT"
+
+      - name: Smoke test (second launch, existing data)
+        env:
+          SCREENSHOT: desktop/out/smoke/harbour-macos-${{ matrix.arch }}-second-launch.png
+        run: node desktop/scripts/smoke.mjs --app=/Applications/Harbour.app --screenshot="$SCREENSHOT"
+
+      - name: Collect logs and sizes
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+          DMG: desktop/out/${{ steps.meta.outputs.dmg }}
+        run: |
+          mkdir -p desktop/out/smoke/logs
+          cp -R "$HOME/Library/Application Support/Harbour/logs/." desktop/out/smoke/logs/ 2>/dev/null || true
+          cp desktop/out/resources/build-info.json desktop/out/smoke/ 2>/dev/null || true
+          {
+            echo "### Harbour for Mac ($ARCH)"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            [ -f "$DMG" ] && echo "| DMG | $(basename "$DMG"), $(du -h "$DMG" | cut -f1) |"
+            [ -d /Applications/Harbour.app ] && echo "| Installed app | $(du -sh /Applications/Harbour.app | cut -f1) |"
+            [ -f "$DMG.sha256" ] && echo "| SHA-256 | \`$(cut -d' ' -f1 "$DMG.sha256")\` |"
+            echo "| Runner | $(sw_vers -productName) $(sw_vers -productVersion), $(uname -m) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Harbour-${{ steps.meta.outputs.version }}-${{ matrix.arch }}-dmg
+          path: |
+            desktop/out/${{ steps.meta.outputs.dmg }}
+            desktop/out/${{ steps.meta.outputs.dmg }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbour-smoke-test-macos-${{ matrix.arch }}
+          path: desktop/out/smoke/
+          if-no-files-found: warn
+          retention-days: 30
+
+  release:
+    name: Publish release
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'desktop-v')
+    needs: mac
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Download the DMGs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Harbour-*-dmg
+          merge-multiple: true
+          path: dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#desktop-v}"
+          cd dist
+          ls -la
+          sha256sum -c ./*.sha256
+          files=("Harbour-$version-arm64.dmg" "Harbour-$version-x64.dmg" "Harbour-$version-arm64.dmg.sha256" "Harbour-$version-x64.dmg.sha256")
+          for f in "${files[@]}"; do test -f "$f" || { echo "::error::Missing $f"; exit 1; }; done
+          node ../desktop/scripts/release-notes.mjs "$version" > ../release-notes.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            prerelease=()
+            case "$version" in *-*) prerelease=(--prerelease) ;; esac
+            gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "Harbour $version for Mac" --notes-file ../release-notes.md "${prerelease[@]}"
+          fi
