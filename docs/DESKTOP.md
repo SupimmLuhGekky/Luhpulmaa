@@ -8,6 +8,7 @@ same app you would get on the web, served by Harbour itself at `http://127.0.0.1
 
 - [Install](#install)
 - [Updating](#updating)
+- [Forgot your password?](#forgot-your-password)
 - [Where your data lives](#where-your-data-lives)
 - [Back up and restore](#back-up-and-restore)
 - [Optional settings: harbour.env](#optional-settings-harbourenv)
@@ -73,6 +74,23 @@ item in your keychain. That's Harbour's own key: enter your login password and c
 **Always Allow**. (This happens because each version is signed separately. If you click
 Deny, Harbour explains what happened and offers to try again.)
 
+## Forgot your password?
+
+Harbour for Mac never sends email: your account exists only on this Mac, so there is no
+confirmation email when you sign up and no emailed reset link. Reset your password from the
+menu bar instead:
+
+1. In the menu bar, choose **Harbour → Reset Password…**.
+2. Confirm your account, or pick it if this Mac has more than one.
+3. The Harbour window shows **Choose a new password**. Enter the new password twice, click
+   **Update password**, then sign in with it.
+
+The link Harbour opens works once and expires after an hour; choosing **Reset Password…**
+again replaces it. Resetting signs the account out everywhere, and Harbour signs its window
+out first. The demo account isn't listed. Like everything in Harbour, this relies on your Mac
+login: anyone who can use your Mac account can reset a Harbour password, so lock your Mac
+when you step away.
+
 ## Where your data lives
 
 Everything Harbour stores is in one folder (**Help → Open Data Folder**):
@@ -81,7 +99,7 @@ Everything Harbour stores is in one folder (**Help → Open Data Folder**):
 ~/Library/Application Support/Harbour/
   database/          your Harbour data (PostgreSQL 16)
   secrets.enc        Harbour's keys, encrypted by the macOS keychain ("Harbour Safe Storage")
-  logs/              main.log, server.log, postgres.log (5 MB each, one older copy kept)
+  logs/              main.log, server.log, postgres.log (5 MB each, three older copies kept)
   harbour.env        optional settings (only if you create it, see below)
   session/           the window's cookies and cache
   window-state.json  window size and position
@@ -165,8 +183,9 @@ button. Common causes:
 (It prefers 47800 so the window keeps the same address, and so you stay signed in, between
 launches.)
 
-**Forgot your password.** Harbour for Mac doesn't send email, so password-reset and
-verification emails can't be delivered. Keep your password in a password manager.
+**Forgot your password.** Choose **Harbour → Reset Password…** in the menu bar (see
+[Forgot your password?](#forgot-your-password)). Harbour for Mac doesn't send email, so
+**Forgot password?** on the sign-in page points you there too.
 
 **Starting over.** Quit Harbour and move `~/Library/Application Support/Harbour` to the
 Trash. This deletes all your Harbour data. You can also delete the "Harbour Safe Storage"
@@ -222,6 +241,13 @@ unchanged web app:
 6. **Background jobs**: the app calls `/api/cron/daily` shortly after start-up and every 6
    hours while open, the job that Vercel Cron runs for the web version.
 7. **Quit**: the web server stops, then the database shuts down cleanly.
+
+**Harbour → Reset Password…** stands in for the reset email. It lists the accounts in the
+database (not the demo account) and creates a reset token the way the web app's
+`issueToken` does: 32 random bytes (base64url), stored only as its SHA-256 hash, valid for one
+hour, replacing the account's unused reset tokens in the same transaction. It signs the window
+out and opens `/reset-password?token=…` there; the web app's page does the rest (new password,
+every session signed out, audit entry). Harbour never writes the token to its logs.
 
 Electron's [fuses](https://www.electronjs.org/docs/latest/tutorial/fuses) are set so the
 app can't be used as a generic Node.js runtime, only loads its own code from `app.asar`, and

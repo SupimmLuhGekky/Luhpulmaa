@@ -5,9 +5,9 @@ import { RELEASES_URL } from "./constants.mjs";
 /**
  * Standard macOS menu bar. Edit uses Electron's roles so copy, paste, undo and
  * select-all work in every text field.
- * @param {{ dataDir: string, logsDir: string, onCheckForUpdates: () => void }} options
+ * @param {{ dataDir: string, logsDir: string, onCheckForUpdates: () => void, onResetPassword: () => void }} options
  */
-export function installMenu({ dataDir, logsDir, onCheckForUpdates }) {
+export function installMenu({ dataDir, logsDir, onCheckForUpdates, onResetPassword }) {
   const isMac = process.platform === "darwin";
   const isDev = !app.isPackaged;
 
@@ -20,6 +20,9 @@ export function installMenu({ dataDir, logsDir, onCheckForUpdates }) {
             submenu: [
               { role: "about" },
               { label: "Check for Updates…", click: onCheckForUpdates },
+              { type: "separator" },
+              // The Mac app can't email reset links; this opens one directly (see password-reset-flow.mjs).
+              { label: "Reset Password…", click: onResetPassword },
               { type: "separator" },
               { role: "services" },
               { type: "separator" },
@@ -61,7 +64,12 @@ export function installMenu({ dataDir, logsDir, onCheckForUpdates }) {
         { label: "Open Logs Folder", click: () => void shell.openPath(logsDir) },
         { type: "separator" },
         { label: "Harbour Releases", click: () => void shell.openExternal(RELEASES_URL) },
-        ...(isMac ? [] : [/** @type {Electron.MenuItemConstructorOptions} */ ({ label: "Check for Updates…", click: onCheckForUpdates })]),
+        ...(isMac
+          ? []
+          : /** @type {Electron.MenuItemConstructorOptions[]} */ ([
+              { label: "Reset Password…", click: onResetPassword },
+              { label: "Check for Updates…", click: onCheckForUpdates },
+            ])),
       ],
     },
   ];
