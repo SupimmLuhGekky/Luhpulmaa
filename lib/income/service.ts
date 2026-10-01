@@ -90,14 +90,17 @@ export async function upsertIncomeSource(userId: string, id: string | null, inpu
     const owned = await prisma.account.count({ where: { id: input.accountId, userId } });
     if (!owned) throw notFound("Account");
   }
+  // On edit, fields the caller leaves out are kept: dropping the match pattern would
+  // unlink a detected source from its paycheques and the next sync would re-create it.
+  const keep = (v: unknown) => Boolean(id) && v === undefined;
   const data = {
     name: input.name,
     frequency: input.frequency,
     averageAmountCents: input.averageAmountCents,
     nextExpectedDate: toDbDate(input.nextExpectedDate),
-    semiMonthlyDays: input.semiMonthlyDays ?? [15, 31],
-    accountId: input.accountId ?? null,
-    matchPattern: input.matchPattern ?? null,
+    ...(keep(input.semiMonthlyDays) ? {} : { semiMonthlyDays: input.semiMonthlyDays ?? [15, 31] }),
+    ...(keep(input.accountId) ? {} : { accountId: input.accountId ?? null }),
+    ...(keep(input.matchPattern) ? {} : { matchPattern: input.matchPattern ?? null }),
     isDetected: false,
   };
   let source;
@@ -108,7 +111,9 @@ export async function upsertIncomeSource(userId: string, id: string | null, inpu
   } else {
     source = await prisma.incomeSource.create({ data: { userId, ...data } });
   }
-  if (input.isPrimary) {
+  // The first source becomes the primary one.
+  const makePrimary = input.isPrimary || (!id && (await prisma.incomeSource.count({ where: { userId, isActive: true, isPrimary: true } })) === 0);
+  if (makePrimary) {
     await prisma.$transaction([
       prisma.incomeSource.updateMany({ where: { userId, id: { not: source.id } }, data: { isPrimary: false } }),
       prisma.incomeSource.update({ where: { id: source.id }, data: { isPrimary: true } }),
@@ -119,9 +124,26 @@ export async function upsertIncomeSource(userId: string, id: string | null, inpu
 }
 
 export async function deleteIncomeSource(userId: string, id: string) {
-  const { count } = await prisma.incomeSource.deleteMany({ where: { id, userId } });
-  if (!count) throw notFound("Income source");
+  const existing = await prisma.incomeSource.findFirst({ where: { id, userId }, select: { isPrimary: true } });
+  if (!existing) throw notFound("Income source");
+  await prisma.incomeSource.delete({ where: { id } });
+  if (existing.isPrimary) {
+    // Keep one primary source: promote the oldest remaining one.
+    const next = await prisma.incomeSource.findFirst({ where: { userId, isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
+    if (next) await prisma.incomeSource.update({ where: { id: next.id }, data: { isPrimary: true } });
+  }
   await audit(userId, "income.changed", { type: "income_source", id }, { deleted: true });
+}
+
+/** Marks one source as the primary paycheque (used for defaults such as plan previews). */
+export async function setPrimaryIncomeSource(userId: string, id: string) {
+  const existing = await prisma.incomeSource.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) throw notFound("Income source");
+  await prisma.$transaction([
+    prisma.incomeSource.updateMany({ where: { userId, id: { not: id } }, data: { isPrimary: false } }),
+    prisma.incomeSource.update({ where: { id }, data: { isPrimary: true } }),
+  ]);
+  await audit(userId, "income.changed", { type: "income_source", id }, { primary: true });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
