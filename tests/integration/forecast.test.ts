@@ -113,9 +113,7 @@ describe("cash-flow forecast", () => {
 });
 
 describe("scheduled savings late in the month", () => {
-  // lib/forecast/service.ts (not editable here): scheduled allocations are matched with
-  // `dayOfMonth === day`, but the engine runs a day-31 schedule on the 30th in 30-day months.
-  it.fails("counts a 'day 31' allocation that will run on November 30", async () => {
+  it("counts a 'day 31' allocation that will run on November 30", async () => {
     freezeTime("2026-11-20T17:00:00Z");
     try {
       const other = (await createUser({ firstName: "Rose", minCashBufferCents: 0 })).id;

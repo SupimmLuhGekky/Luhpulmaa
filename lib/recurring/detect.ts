@@ -8,7 +8,7 @@
  * amount stability and the number of occurrences.
  */
 import type { Frequency } from "@prisma/client";
-import { addDays, addMonths, daysBetween, type LocalDate } from "@/lib/dates";
+import { addDays, addMonths, daysBetween, endOfMonth, type LocalDate } from "@/lib/dates";
 import { medianCents } from "@/lib/finance/calculations";
 import { normalizeMerchant } from "@/lib/transactions/normalize";
 import { matchSystemRule } from "@/lib/transactions/system-rules";
@@ -119,6 +119,37 @@ export function projectNext(last: LocalDate, frequency: Frequency, semiMonthlyDa
   }
 }
 
+const MONTH_STEPS: Partial<Record<Frequency, number>> = { MONTHLY: 1, QUARTERLY: 3, YEARLY: 12 };
+
+/**
+ * Day of the month a monthly, quarterly or yearly series falls on. A payment on the last
+ * day of a short month (November 30, February 28) belongs to a series due later in the
+ * month when the occurrences just before it fell later.
+ */
+function dueDayOfMonth(dates: LocalDate[]): number {
+  const last = dates[dates.length - 1];
+  const day = Number(last.slice(8, 10));
+  if (last !== endOfMonth(last)) return day;
+  return Math.max(day, ...dates.slice(-3).map((d) => Number(d.slice(8, 10))));
+}
+
+/** The first expected date after the last occurrence that is not before `today`. */
+function nextExpected(dates: LocalDate[], frequency: Frequency, today: LocalDate, semiMonthlyDays?: number[]): LocalDate {
+  const last = dates[dates.length - 1];
+  const step = MONTH_STEPS[frequency];
+  if (step) {
+    // Count whole cycles from the last real date, so catching up past February keeps the 31st.
+    const day = dueDayOfMonth(dates);
+    let cycles = 1;
+    let next = addMonths(last, step, day);
+    while (next < today) next = addMonths(last, step * ++cycles, day);
+    return next;
+  }
+  let next = projectNext(last, frequency, semiMonthlyDays);
+  while (next < today) next = projectNext(next, frequency, semiMonthlyDays);
+  return next;
+}
+
 function amountStability(amounts: number[]): number {
   const med = medianCents(amounts.map(Math.abs));
   if (med === 0) return 0;
@@ -202,11 +233,10 @@ export function detectRecurring(txns: RecurringInputTxn[], today: LocalDate, opt
     if (cls.frequency === "WEEKLY" && stability < 0.8) continue;
 
     const last = dates[dates.length - 1];
-    let next = projectNext(last, cls.frequency, cls.semiMonthlyDays);
     // A series that stopped (missed 2+ cycles) is no longer active.
     const cycle = cls.frequency === "SEMI_MONTHLY" ? 16 : ({ WEEKLY: 7, BIWEEKLY: 14, MONTHLY: 31, QUARTERLY: 92, YEARLY: 366 } as Record<string, number>)[cls.frequency] ?? 31;
     if (daysBetween(last, today) > cycle * 2 + 5) continue;
-    while (next < today) next = projectNext(next, cls.frequency, cls.semiMonthlyDays);
+    const next = nextExpected(dates, cls.frequency, today, cls.semiMonthlyDays);
 
     const countScore = Math.min(1, dates.length / 6);
     const confidence = Math.round((cls.regularity * 0.45 + stability * 0.35 + countScore * 0.2) * 100);

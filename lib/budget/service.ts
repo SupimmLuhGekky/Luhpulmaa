@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit";
 import { addDays, addMonthKey, endOfWeek, fromDbDate, monthKey, monthRange, startOfWeek, toDbDate, type LocalDate, type MonthKey } from "@/lib/dates";
 import { calculateBudgetRemaining, calculateRollover, calculateZeroBased, resolveBudgetAmount } from "@/lib/finance/calculations";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
-import { spendingByCategory, spendingByCategoryPerMonth, totalIncome, totalSpending } from "@/lib/analytics/aggregates";
+import { incomeSpendingSeries, spendingByCategory, spendingByCategoryPerMonth, totalIncome, totalSpending } from "@/lib/analytics/aggregates";
 import { runBudgetThresholdAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
 import { userPreferences } from "@/lib/settings/preferences";
@@ -150,8 +150,14 @@ async function computeRollovers(userId: string, month: MonthKey, categoryIds: st
     orderBy: { startDate: "asc" },
   });
   if (!budgets.length) return result;
-  const spend = await spendingByCategoryPerMonth(userId, `${firstMonth}-01`, addDays(`${month}-01`, -1));
+  const lastDay = addDays(`${month}-01`, -1);
+  const needsIncome = budgets.some((b) => b.plannedIncomeCents === null && b.items.some((i) => i.amountType === "PERCENT_OF_INCOME"));
+  const [spend, income] = await Promise.all([
+    spendingByCategoryPerMonth(userId, `${firstMonth}-01`, lastDay),
+    needsIncome ? incomeSpendingSeries(userId, `${firstMonth}-01`, lastDay, "month") : Promise.resolve([]),
+  ]);
   const spendKey = new Map(spend.map((s) => [`${s.month}|${s.categoryId}`, s.spending]));
+  const incomeByMonth = new Map(income.map((p) => [p.period, p.income]));
   for (const categoryId of categoryIds) {
     let carry = 0;
     let lastMonth: MonthKey | null = null;
@@ -164,7 +170,9 @@ async function computeRollovers(userId: string, month: MonthKey, categoryIds: st
         lastMonth = item?.rolloverEnabled ? m : null;
         if (!item?.rolloverEnabled) continue;
       }
-      const budgeted = resolveBudgetAmount({ amountType: item.amountType, amountCents: toCents(item.amountCents), percentBps: item.percentBps }, toCents(b.plannedIncomeCents));
+      // Same income base as budgetView: the planned income, or what actually came in that month.
+      const incomeBase = toCents(b.plannedIncomeCents) || (incomeByMonth.get(m) ?? 0);
+      const budgeted = resolveBudgetAmount({ amountType: item.amountType, amountCents: toCents(item.amountCents), percentBps: item.percentBps }, incomeBase);
       carry = calculateRollover(budgeted, spendKey.get(`${m}|${categoryId}`) ?? 0, carry);
       lastMonth = m;
     }

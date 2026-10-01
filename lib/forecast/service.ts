@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
-import { addDays, daysBetween, fromDbDate, monthKey, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
+import { addDays, daysBetween, daysInMonth, fromDbDate, monthKey, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
 import { nextOccurrence, occurrencesBetween } from "@/lib/dates/schedule";
 import { calculateCashFlow, calculateSafeToSpend, type CashFlowEvent } from "@/lib/finance/calculations";
 import { mulDiv, toCents, type Cents } from "@/lib/finance/money";
@@ -11,6 +11,16 @@ import { expectedPaydays } from "@/lib/income/service";
 import { userPreferences } from "@/lib/settings/preferences";
 import { ESSENTIAL_CATEGORY_KEYS } from "@/lib/categories/defaults";
 import { totalSpending } from "@/lib/analytics/aggregates";
+
+/**
+ * Whether a scheduled automation runs on `date`. Like the automation engine, a monthly
+ * schedule set past the end of a shorter month (the 31st) runs on that month's last day.
+ */
+function scheduledOn(trigger: string, cfg: { dayOfMonth?: number; dayOfWeek?: number }, date: LocalDate): boolean {
+  if (trigger === "SCHEDULE_WEEKLY") return cfg.dayOfWeek === new Date(`${date}T00:00:00Z`).getUTCDay();
+  if (trigger !== "SCHEDULE_MONTHLY" || !cfg.dayOfMonth) return false;
+  return Number(date.slice(8, 10)) === Math.min(cfg.dayOfMonth, daysInMonth(Number(date.slice(0, 4)), Number(date.slice(5, 7))));
+}
 
 /**
  * Safe-to-spend: how much can be spent before the next payday without missing a
@@ -69,11 +79,7 @@ export async function safeToSpend(userId: string) {
     const cfg = a.triggerConfig as { dayOfMonth?: number; dayOfWeek?: number };
     const amount = a.actions.filter((x) => x.type === "ALLOCATE_TO_GOAL").reduce((acc, x) => acc + ((x.config as { amountCents?: number }).amountCents ?? 0), 0);
     if (!amount) continue;
-    for (let d = today; d <= horizonEnd; d = addDays(d, 1)) {
-      const dom = Number(d.slice(8, 10));
-      const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-      if ((a.trigger === "SCHEDULE_MONTHLY" && cfg.dayOfMonth === dom) || (a.trigger === "SCHEDULE_WEEKLY" && cfg.dayOfWeek === dow)) plannedSavings += amount;
-    }
+    for (let d = today; d <= horizonEnd; d = addDays(d, 1)) if (scheduledOn(a.trigger, cfg, d)) plannedSavings += amount;
   }
 
   const result = calculateSafeToSpend({ availableCash: cash.available, upcomingBills, reservedBudget, plannedSavings, minimumBuffer: toCents(user.minCashBufferCents) });
@@ -125,11 +131,7 @@ export async function cashFlowForecast(userId: string, days: 7 | 30 | 60 | 90) {
     const amount = a.actions.filter((x) => x.type === "ALLOCATE_TO_GOAL").reduce((acc, x) => acc + ((x.config as { amountCents?: number }).amountCents ?? 0), 0);
     if (!amount) continue;
     for (let d = today; d <= end; d = addDays(d, 1)) {
-      const dom = Number(d.slice(8, 10));
-      const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-      if ((a.trigger === "SCHEDULE_MONTHLY" && cfg.dayOfMonth === dom) || (a.trigger === "SCHEDULE_WEEKLY" && cfg.dayOfWeek === dow)) {
-        events.push({ date: d, amount: -amount, kind: "goal", label: `${a.name} (planned)` });
-      }
+      if (scheduledOn(a.trigger, cfg, d)) events.push({ date: d, amount: -amount, kind: "goal", label: `${a.name} (planned)` });
     }
   }
 

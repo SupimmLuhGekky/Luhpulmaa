@@ -99,11 +99,17 @@ describe("detectRecurring", () => {
     expect(detectRecurring(rows, TODAY, { minConfidence: 95 })).toEqual([]);
   });
 
-  // lib/recurring/detect.ts (not editable here): chaining projectNext from a clamped date loses the day of month.
-  it.fails("keeps an end-of-month series on the last day after catching up past February", () => {
+  it("keeps an end-of-month series on the last day after catching up past February", () => {
     const rows = series(["2025-10-31", "2025-11-30", "2025-12-31", "2026-01-31"], -50000, "LOYER APPARTEMENT");
     // Jan 31 → Feb 28 → (chained) Mar 28; the rent is due Mar 31.
     expect(detectRecurring(rows, "2026-03-05")[0].nextExpectedDate).toBe("2026-03-31");
+  });
+
+  it("keeps the 31st when the last payment fell on November 30", () => {
+    const rows = series(["2025-08-31", "2025-09-30", "2025-10-31", "2025-11-30"], -50000, "LOYER APPARTEMENT");
+    expect(detectRecurring(rows, "2025-12-05")[0].nextExpectedDate).toBe("2025-12-31");
+    const thirtieth = series(["2025-09-30", "2025-10-30", "2025-11-30"], -50000, "LOYER APPARTEMENT");
+    expect(detectRecurring(thirtieth, "2025-12-05")[0].nextExpectedDate).toBe("2025-12-30");
   });
 });
 

@@ -118,9 +118,7 @@ describe("monthly budget view", () => {
 });
 
 describe("rollovers of percent-of-income lines", () => {
-  // lib/budget/service.ts (not editable here): computeRollovers resolves percent lines against the
-  // budget's planned income only, while budgetView falls back to the month's actual income.
-  it.fails("carries what was left of a percent line budgeted from actual income", async () => {
+  it("carries what was left of a percent line budgeted from actual income", async () => {
     const other = (await createUser({ firstName: "Noah" })).id;
     const account = (await manualAccount(other, { name: "Noah chequing" })).id;
     const fun = await categoryId(other, "entertainment");
