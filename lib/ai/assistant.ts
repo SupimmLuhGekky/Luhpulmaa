@@ -19,6 +19,7 @@ import { listSubscriptions } from "@/lib/subscriptions/service";
 import { listTransactions } from "@/lib/transactions/service";
 import { transactionFiltersSchema } from "@/lib/transactions/schemas";
 import { AI_MODEL, aiClient } from "./client";
+import { conversationFor } from "./history";
 
 /**
  * Optional financial assistant (ENABLE_AI_ASSISTANT + ANTHROPIC_API_KEY + user opt-in).
@@ -367,10 +368,7 @@ export async function askAssistant(userId: string, input: z.infer<typeof assista
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true, currency: true, locale: true } });
   const ctx: ToolContext = { userId, today: todayIn(user.timeZone), currency: user.currency, locale: localeFor(user.locale) };
-  const messages: Anthropic.Messages.MessageParam[] = [
-    ...input.history.map((m) => ({ role: m.role, content: m.content })),
-    { role: "user", content: input.question },
-  ];
+  const messages: Anthropic.Messages.MessageParam[] = conversationFor(input.history, input.question).map((m) => ({ role: m.role, content: m.content }));
   const facts: AssistantFact[] = [];
   const toolsUsed: string[] = [];
   const system = `${SYSTEM_PROMPT}\n\nToday is ${formatDate(ctx.today, "long", ctx.locale)} (${ctx.today}). Currency: ${ctx.currency}.`;
