@@ -125,8 +125,10 @@ export async function syncConnection(userId: string, connectionId: string, trigg
     const startDate = lastSynced ? addDays(lastSynced, -OVERLAP_DAYS) : addDays(today, -INITIAL_HISTORY_DAYS);
     let cursor = connection.syncCursor;
     const createdIds: string[] = [];
+    const stillPending: string[] = [];
     for (let page = 0; page < 50; page++) {
       const res = await provider.getTransactions(token, { cursor, startDate, endDate: today });
+      for (const t of [...res.added, ...res.modified]) if (t.pending) stillPending.push(t.providerTransactionId);
       const ingest = await ingestTransactions(userId, [...toRows(res.added, accountMap), ...toRows(res.modified, accountMap)], { runAutomations: true, notify: trigger !== "connect" });
       createdIds.push(...ingest.created);
       outcome.added += ingest.created.length;
@@ -141,11 +143,15 @@ export async function syncConnection(userId: string, connectionId: string, trigg
       if (!res.hasMore) break;
     }
 
-    // Pending transactions that the provider no longer reports within the window have expired.
-    const windowPending = await prisma.transaction.findMany({
-      where: { userId, accountId: { in: [...accountMap.values()] }, isPending: true, date: { lt: toDbDate(addDays(today, -7)) } },
-      select: { id: true },
-    });
+    // Range providers never say when a card hold is released: a pending transaction over a
+    // week old that this sync did not report again has expired. Cursor providers report
+    // removals themselves, and ones still reported as pending are kept.
+    const windowPending = provider.reportsRemovals
+      ? []
+      : await prisma.transaction.findMany({
+          where: { userId, accountId: { in: [...accountMap.values()] }, isPending: true, isManual: false, date: { lt: toDbDate(addDays(today, -7)) }, NOT: { providerTransactionId: { in: stillPending } } },
+          select: { id: true },
+        });
     if (windowPending.length) {
       const del = await prisma.transaction.deleteMany({ where: { id: { in: windowPending.map((p) => p.id) } } });
       outcome.removed += del.count;

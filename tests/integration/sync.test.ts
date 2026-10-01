@@ -178,3 +178,34 @@ describe("failures", () => {
     expect(await prisma.transaction.count({ where: { userId } })).toBe(total - northernCount);
   });
 });
+
+describe("long card holds", () => {
+  it("keeps a pending transaction the bank still reports after a week, and drops it once the bank stops", async () => {
+    vi.setSystemTime(new Date("2026-10-10T16:00:00Z"));
+    const owner = (await createUser({ firstName: "Lou" })).id;
+    const provider = getProvider("MOCK");
+    const real = provider.getTransactions.bind(provider);
+    let held = true;
+    const spy = vi.spyOn(provider, "getTransactions").mockImplementation(async (token, opts) => {
+      const page = await real(token, opts);
+      if (!held || !page.added.length) return page;
+      const hold = { providerTransactionId: "pd_fictional_hotel_hold", providerAccountId: page.added[0].providerAccountId, date: "2026-09-28", amountCents: -40_000, currency: "CAD", description: "FICTIONAL HOTEL HOLD", pending: true };
+      return { ...page, added: [...page.added, hold] };
+    });
+    try {
+      const holdRow = () => prisma.transaction.findFirst({ where: { userId: owner, providerTransactionId: "pd_fictional_hotel_hold" } });
+      const { connectionId: conn } = await completeConnection(owner, "mock-public:mock_maple");
+      expect(await holdRow()).toMatchObject({ isPending: true, amountCents: -40_000n });
+      vi.setSystemTime(new Date("2026-10-11T16:00:00Z"));
+      expect(await syncConnection(owner, conn)).toMatchObject({ status: "SUCCESS" });
+      expect(await holdRow()).toMatchObject({ isPending: true });
+      // The hotel released the hold: the bank stops reporting it.
+      held = false;
+      vi.setSystemTime(new Date("2026-10-12T16:00:00Z"));
+      expect(await syncConnection(owner, conn)).toMatchObject({ status: "SUCCESS" });
+      expect(await holdRow()).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

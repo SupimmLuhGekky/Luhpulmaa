@@ -91,6 +91,7 @@ export class FlinksProvider implements FinancialDataProvider {
   readonly id = "FLINKS" as const;
   readonly displayName = "Flinks";
   readonly isSimulated = false;
+  readonly reportsRemovals = false;
 
   isConfigured() {
     const e = env();

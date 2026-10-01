@@ -93,6 +93,11 @@ export interface FinancialDataProvider {
   readonly displayName: string;
   /** True when the provider operates on simulated data (never real money). */
   readonly isSimulated: boolean;
+  /**
+   * True when a sync reports removed transactions itself (cursor-based, like Plaid). Range
+   * providers only return what is in the window, so a released card hold just disappears.
+   */
+  readonly reportsRemovals: boolean;
   isConfigured(): boolean;
   createLinkSession(userId: string, opts?: { reconnectItemId?: string; accessToken?: string; language?: "en" | "fr" }): Promise<LinkSession>;
   exchangePublicToken(userId: string, publicToken: string, metadata?: Record<string, unknown>): Promise<ExchangeResult>;

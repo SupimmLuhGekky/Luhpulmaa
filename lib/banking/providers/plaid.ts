@@ -81,6 +81,7 @@ export class PlaidProvider implements FinancialDataProvider {
   readonly id = "PLAID" as const;
   readonly displayName = "Plaid";
   readonly isSimulated = false;
+  readonly reportsRemovals = true;
 
   isConfigured() {
     const e = env();
