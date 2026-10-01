@@ -1,12 +1,14 @@
 import "server-only";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
-import { notFound } from "@/lib/api/errors";
+import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
 import { addDays, daysBetween, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
-import { occurrencesBetween } from "@/lib/dates/schedule";
+import { nextOccurrence, occurrencesBetween } from "@/lib/dates/schedule";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
+import { expectedPaydays } from "@/lib/income/service";
 import { notify } from "@/lib/notifications/service";
+import { paydayWindow } from "./calendar";
 
 export const BILL_FREQUENCIES = ["ONE_TIME", "WEEKLY", "BIWEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"] as const;
 
@@ -70,7 +72,8 @@ export async function billOccurrences(userId: string, from: LocalDate, to: Local
   return out.sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : a.name.localeCompare(b.name)));
 }
 
-export async function listBills(userId: string) {
+/** All bills (active first). With `today`, each row also gets its next due date on or after today. */
+export async function listBills(userId: string, today?: LocalDate) {
   const bills = await prisma.bill.findMany({
     where: { userId },
     include: { category: { select: { id: true, name: true, icon: true, color: true } }, account: { select: { id: true, name: true } } },
@@ -87,10 +90,57 @@ export async function listBills(userId: string) {
     reminderDaysBefore: b.reminderDaysBefore,
     notes: b.notes,
     isActive: b.isActive,
+    recurringId: b.recurringId,
+    nextDueDate: today && b.isActive ? nextOccurrence(fromDbDate(b.anchorDate), b.frequency, today, { endDate: fromDbDate(b.endDate) }) : null,
     category: b.category,
     account: b.account,
   }));
 }
+
+/** How far back unpaid occurrences count as "overdue" in summaries. */
+export const OVERDUE_LOOKBACK_DAYS = 60;
+
+/**
+ * Money the user's bills need before the next expected payday: unpaid bill
+ * occurrences from today until the day before that payday (the same window
+ * safe-to-spend uses), plus unpaid overdue occurrences and subscriptions charged in
+ * the same window, reported separately. Paydays are estimates from income sources.
+ */
+export async function billsBeforePayday(userId: string, today: LocalDate) {
+  const paydays = await expectedPaydays(userId, addDays(today, 1), addDays(today, 45));
+  const next = paydays[0] ?? null;
+  const window = paydayWindow(today, next?.date ?? null);
+  const [due, overdue, subs, billSeries] = await Promise.all([
+    billOccurrences(userId, window.from, window.to),
+    billOccurrences(userId, addDays(today, -OVERDUE_LOOKBACK_DAYS), addDays(today, -1)),
+    prisma.subscription.findMany({ where: { userId, status: "ACTIVE", nextChargeDate: { not: null } }, select: { name: true, amountCents: true, frequency: true, nextChargeDate: true, recurringId: true } }),
+    prisma.bill.findMany({ where: { userId, recurringId: { not: null } }, select: { recurringId: true } }),
+  ]);
+  const bills = due.filter((o) => !o.paid);
+  const overdueBills = overdue.filter((o) => !o.paid);
+  // Subscriptions that are also tracked as bills (same recurring series) are counted once, as bills.
+  const billRecurring = new Set(billSeries.map((b) => b.recurringId));
+  const subscriptions: { name: string; date: LocalDate; amountCents: Cents }[] = [];
+  for (const s of subs) {
+    if (s.recurringId && billRecurring.has(s.recurringId)) continue;
+    for (const d of occurrencesBetween(fromDbDate(s.nextChargeDate)!, s.frequency, window.from, window.to)) subscriptions.push({ name: s.name, date: d, amountCents: toCents(s.amountCents) });
+  }
+  subscriptions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name.localeCompare(b.name)));
+  const sum = (xs: { amountCents: Cents }[]) => xs.reduce((acc, x) => acc + x.amountCents, 0);
+  return {
+    today,
+    nextPayday: next ? { date: next.date, amountCents: next.amount, name: next.name } : null,
+    windowEnd: window.to,
+    bills,
+    total: sum(bills),
+    overdue: overdueBills,
+    overdueTotal: sum(overdueBills),
+    subscriptions,
+    subscriptionsTotal: sum(subscriptions),
+  };
+}
+
+export type BillsBeforePayday = Awaited<ReturnType<typeof billsBeforePayday>>;
 
 async function assertRefs(userId: string, input: { categoryId?: string | null; accountId?: string | null }) {
   if (input.categoryId && !(await prisma.category.count({ where: { id: input.categoryId, userId } }))) throw notFound("Category");
@@ -148,10 +198,13 @@ export async function deleteBill(userId: string, id: string) {
   await audit(userId, "bill.changed", { type: "bill", id }, { deleted: true });
 }
 
+/** Records (or clears) the user's note that one occurrence was paid. No money moves. */
 export async function setBillPaid(userId: string, billId: string, dueDate: LocalDate, paid: boolean, amountCents?: number) {
   const bill = await prisma.bill.findFirst({ where: { id: billId, userId } });
   if (!bill) throw notFound("Bill");
   if (paid) {
+    const isDueDate = occurrencesBetween(fromDbDate(bill.anchorDate), bill.frequency, dueDate, dueDate, { endDate: fromDbDate(bill.endDate) }).length > 0;
+    if (!isDueDate) throw new AppError("VALIDATION_FAILED", "That date isn't one of this bill's due dates.");
     await prisma.billPayment.upsert({
       where: { billId_dueDate: { billId, dueDate: toDbDate(dueDate) } },
       update: { amountCents: amountCents ?? bill.amountCents, paidAt: new Date() },

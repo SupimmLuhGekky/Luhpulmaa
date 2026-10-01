@@ -126,6 +126,15 @@ function amountStability(amounts: number[]): number {
   return within / amounts.length;
 }
 
+/**
+ * Whether a series is treated as a subscription. Detection decides once, when the
+ * series is first seen; after that the stored flag wins, because the user may have
+ * marked it ("Mark as subscription") or unmarked it ("Not a subscription").
+ */
+export function keepSubscriptionChoice(existing: { isSubscription: boolean } | null | undefined, detected: boolean): boolean {
+  return existing ? existing.isSubscription : detected;
+}
+
 export function detectRecurring(txns: RecurringInputTxn[], today: LocalDate, opts: { minConfidence?: number } = {}): DetectedSeries[] {
   const minConfidence = opts.minConfidence ?? 60;
   const groups = new Map<string, RecurringInputTxn[]>();

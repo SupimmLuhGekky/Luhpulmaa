@@ -4,7 +4,7 @@ import { addDays, daysBetween, fromDbDate, todayIn, toDbDate, type LocalDate } f
 import { formatCurrency, toCents } from "@/lib/finance/money";
 import { runSubscriptionDetectedAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
-import { detectRecurring, type DetectedSeries } from "./detect";
+import { detectRecurring, keepSubscriptionChoice, type DetectedSeries } from "./detect";
 
 const BILL_CATEGORY_KEYS = new Set(["housing", "utilities", "insurance", "education"]);
 
@@ -42,7 +42,8 @@ export async function detectAndPersistRecurring(userId: string, opts: { today?: 
     const cat = s.categoryId ? catById.get(s.categoryId) : undefined;
     // Housing, utility, insurance and tuition series are bills even when their amount is fixed.
     const isBillCategory = Boolean(cat?.systemKey && BILL_CATEGORY_KEYS.has(cat.systemKey));
-    const isSubscription = !isBillCategory && (s.isSubscriptionLike || (s.direction === "OUTFLOW" && cat?.id === subscriptionsCat?.id));
+    const looksLikeSubscription = !isBillCategory && (s.isSubscriptionLike || (s.direction === "OUTFLOW" && cat?.id === subscriptionsCat?.id));
+    const isSubscription = keepSubscriptionChoice(existing, looksLikeSubscription);
     const merchantId = merchantByTxn.get(s.transactionIds[0]) ?? null;
     const data = {
       name: s.name,

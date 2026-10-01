@@ -6,6 +6,7 @@ import { calculateNetWorth, type NetWorthResult } from "@/lib/finance/calculatio
 import { toCents } from "@/lib/finance/money";
 import { convertToBase } from "@/lib/finance/fx";
 import { isLiability, netWorthGroup } from "@/lib/accounts/types";
+import { accountContributions, type AccountBalanceInput } from "./contributions";
 
 /** Current net worth from visible, active accounts marked "include in net worth". */
 export async function currentNetWorth(userId: string): Promise<NetWorthResult & { accountCount: number }> {
@@ -59,4 +60,62 @@ export async function netWorthSummary(userId: string, today: LocalDate) {
     changeThisYear: yearStart === null ? null : current.netWorth - yearStart,
     change12Months: oneYearAgo === null ? null : current.netWorth - oneYearAgo,
   };
+}
+
+/** Each account's balance on `date`: its latest snapshot on or before that day. */
+async function balancesOn(userId: string, date: LocalDate): Promise<Map<string, number>> {
+  const rows = await prisma.$queryRaw<{ accountId: string; balanceCents: bigint }[]>`
+    SELECT DISTINCT ON ("accountId") "accountId", "balanceCents"
+    FROM "account_balance_snapshots"
+    WHERE "userId" = ${userId}::uuid AND "date" <= ${toDbDate(date)}
+    ORDER BY "accountId", "date" DESC`;
+  return new Map(rows.map((r) => [r.accountId, toCents(r.balanceCents)]));
+}
+
+/**
+ * Per-account contribution to net worth (same accounts and conversion as
+ * currentNetWorth), with each account's change since `since` from its balance
+ * history. Accounts left out of net worth are listed separately.
+ */
+export async function netWorthAccounts(userId: string, since: LocalDate | null) {
+  const [accounts, user, start] = await Promise.all([
+    prisma.account.findMany({
+      where: { userId, status: { not: "CLOSED" } },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        currency: true,
+        currentBalanceCents: true,
+        includeInNetWorth: true,
+        isHidden: true,
+        isManual: true,
+        institution: { select: { name: true } },
+        connection: { select: { provider: true } },
+      },
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { currency: true } }),
+    since ? balancesOn(userId, since) : Promise.resolve(new Map<string, number>()),
+  ]);
+  const rows: AccountBalanceInput[] = await Promise.all(
+    accounts.map(async (a) => {
+      const startRaw = start.get(a.id);
+      return {
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        group: netWorthGroup(a.type),
+        side: isLiability(a.type) ? ("liability" as const) : ("asset" as const),
+        balance: await convertToBase(userId, toCents(a.currentBalanceCents), a.currency, user.currency),
+        startBalance: startRaw === undefined ? null : await convertToBase(userId, startRaw, a.currency, user.currency),
+        included: a.includeInNetWorth,
+        institution: a.institution?.name ?? null,
+        isManual: a.isManual,
+        isSimulated: a.connection?.provider === "MOCK",
+        isHidden: a.isHidden,
+      };
+    }),
+  );
+  return accountContributions(rows);
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { formatBps, formatCurrency, type Cents } from "@/lib/finance/money";
-import type { LocalDate } from "@/lib/dates";
+import { daysBetween, type LocalDate } from "@/lib/dates";
 
 /**
  * Factual spending insights. Every insight is a CALCULATION over the user's own data
@@ -16,7 +16,17 @@ export interface Insight {
 }
 
 interface InsightInput {
-  range: { from: LocalDate; to: LocalDate; previousFrom: LocalDate; previousTo: LocalDate; label: string };
+  range: {
+    from: LocalDate;
+    to: LocalDate;
+    previousFrom: LocalDate;
+    previousTo: LocalDate;
+    label: string;
+    /** "this month", "in this period" (derived from `label` when absent). */
+    periodPhrase?: string;
+    /** "the same days last month", "the previous 14 days"… */
+    comparisonLabel?: string;
+  };
   metrics: {
     income: Cents;
     spending: Cents;
@@ -27,17 +37,23 @@ interface InsightInput {
     previous: { income: Cents; spending: Cents };
   };
   categoryBreakdown: { name: string; spending: Cents; previous: Cents; shareBps: number }[];
+  /** Categories with spending in either period (defaults to the breakdown). */
+  categoryChanges?: { name: string; spending: Cents; previous: Cents }[];
   today: LocalDate;
+  /** True when the figures only cover some accounts or categories. */
+  scoped?: boolean;
 }
 
 export async function generateInsights(_userId: string, input: InsightInput): Promise<Insight[]> {
   const out: Insight[] = [];
   const { metrics, categoryBreakdown, range } = input;
-  const period = range.label.toLowerCase().replace("this ", "this ");
-  const prevLabel = range.label === "This month" ? "last month" : "the previous period";
+  const period = range.periodPhrase ?? (range.label.startsWith("This ") ? range.label.toLowerCase() : "in this period");
+  const prevLabel = range.comparisonLabel ?? (range.label === "This month" ? "last month" : "the previous period");
+  const spendingNoun = input.scoped ? "spending in this selection" : "your spending";
+  const days = daysBetween(range.from, range.to) + 1;
 
-  // Largest category change vs previous period (same number of days).
-  const changes = categoryBreakdown
+  // Largest category change vs the previous period.
+  const changes = (input.categoryChanges ?? categoryBreakdown)
     .filter((c) => c.previous > 0 || c.spending > 0)
     .map((c) => ({ ...c, delta: c.spending - c.previous }))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
@@ -51,19 +67,20 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       basis: `${top.name}: ${formatCurrency(top.spending)} (${range.from} → ${range.to}) vs ${formatCurrency(top.previous)} (${range.previousFrom} → ${range.previousTo}).`,
     });
   }
-  const biggest = categoryBreakdown[0];
+  // A share is only informative when there is more than one category to compare.
+  const biggest = categoryBreakdown.length > 1 ? categoryBreakdown[0] : undefined;
   if (biggest && metrics.spending > 0) {
     out.push({
       id: "category-share",
       kind: "fact",
       tone: "neutral",
-      text: `${biggest.name} represents ${formatBps(biggest.shareBps, 0)} of your spending ${period}.`,
+      text: `${biggest.name} represents ${formatBps(biggest.shareBps, 0)} of ${spendingNoun} ${period}.`,
       basis: `${formatCurrency(biggest.spending)} of ${formatCurrency(metrics.spending)} total spending.`,
     });
   }
   const transport = categoryBreakdown.find((c) => c.name.toLowerCase() === "transportation");
-  if (transport && transport !== biggest && metrics.spending > 0) {
-    out.push({ id: "transport-share", kind: "fact", tone: "neutral", text: `Transportation represents ${formatBps(transport.shareBps, 0)} of your spending.`, basis: `${formatCurrency(transport.spending)} of ${formatCurrency(metrics.spending)}.` });
+  if (transport && biggest && transport !== biggest && metrics.spending > 0) {
+    out.push({ id: "transport-share", kind: "fact", tone: "neutral", text: `Transportation represents ${formatBps(transport.shareBps, 0)} of ${spendingNoun} ${period}.`, basis: `${formatCurrency(transport.spending)} of ${formatCurrency(metrics.spending)}.` });
   }
   if (metrics.recurringMonthly > 0) {
     out.push({
@@ -71,15 +88,16 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       kind: "fact",
       tone: "neutral",
       text: `Your recurring expenses total approximately ${formatCurrency(metrics.recurringMonthly, { wholeDollars: true })}/month.`,
-      basis: "Sum of detected recurring outflows converted to a monthly amount (weekly × 52 / 12, biweekly × 26 / 12, …).",
+      basis: `Sum of detected recurring outflows converted to a monthly amount (weekly × 52 / 12, biweekly × 26 / 12, …)${input.scoped ? ", across all accounts" : ""}.`,
     });
   }
-  if (metrics.averageDailySpending > 0) {
+  // A weekly figure from fewer than 7 days of data would be an extrapolation.
+  if (metrics.averageDailySpending > 0 && days >= 7) {
     out.push({
       id: "weekly-average",
       kind: "fact",
       tone: "neutral",
-      text: `Your average weekly spending is ${formatCurrency(metrics.averageDailySpending * 7, { wholeDollars: true })}.`,
+      text: `${input.scoped ? "Average weekly spending in this selection" : "Your average weekly spending"} ${period} is ${formatCurrency(metrics.averageDailySpending * 7, { wholeDollars: true })}.`,
       basis: `Average daily spending ${formatCurrency(metrics.averageDailySpending)} × 7, over ${range.from} → ${range.to}.`,
     });
   }
@@ -88,7 +106,10 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       id: "savings-rate",
       kind: "fact",
       tone: metrics.savingsRateBps >= 0 ? "positive" : "attention",
-      text: metrics.savingsRateBps >= 0 ? `You kept ${formatBps(metrics.savingsRateBps, 0)} of your income ${period}.` : `Spending exceeded income by ${formatCurrency(metrics.spending - metrics.income, { wholeDollars: true })} ${period}.`,
+      text:
+        metrics.savingsRateBps >= 0
+          ? `${input.scoped ? "In this selection, you kept" : "You kept"} ${formatBps(metrics.savingsRateBps, 0)} of your income ${period}.`
+          : `${input.scoped ? "In this selection, spending" : "Spending"} exceeded income by ${formatCurrency(metrics.spending - metrics.income, { wholeDollars: true })} ${period}.`,
       basis: `(Income ${formatCurrency(metrics.income)} − spending ${formatCurrency(metrics.spending)}) ÷ income. Transfers are excluded.`,
     });
   }
@@ -98,7 +119,7 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       kind: "fact",
       tone: "neutral",
       text: `Subscriptions cost ${formatCurrency(metrics.subscriptionsMonthly)}/month, about ${formatCurrency(metrics.subscriptionsMonthly * 12, { wholeDollars: true })} a year.`,
-      basis: "Active subscriptions converted to monthly and annual amounts.",
+      basis: `Active subscriptions converted to monthly and annual amounts${input.scoped ? ", across all accounts" : ""}.`,
     });
   }
   return out;
