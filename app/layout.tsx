@@ -9,7 +9,15 @@ export const metadata: Metadata = {
   description: "See where your money goes, plan budgets and savings goals, and forecast your cash flow. Harbour is a budgeting tool, not a bank.",
   applicationName: "Harbour",
   robots: { index: false, follow: false },
-  icons: { icon: "/icon.svg" },
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/icons/apple-touch-icon.png",
+  },
+  appleWebApp: { capable: true, title: "Harbour", statusBarStyle: "default" },
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 export const viewport: Viewport = {
