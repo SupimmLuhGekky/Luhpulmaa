@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/shared/notice";
 import { InstitutionIcon } from "./account-icon";
+import { possessive } from "./format";
 import { FlinksConnectDialog, LinkStatus, useBankLink, type BankLink } from "./bank-link";
 import type { BankingInfo, ConnectionView, MockInstitution } from "./types";
 
@@ -68,7 +69,7 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
   return (
     <div className="space-y-5">
       <ul className="space-y-3">
-        <TrustPoint icon={Lock} title={`You sign in inside ${banking.displayName}'s secure window`}>
+        <TrustPoint icon={Lock} title={`You sign in inside ${possessive(banking.displayName)} secure window`}>
           Harbour never sees or stores your bank username or password. {banking.displayName} hands Harbour a one-time code instead.
         </TrustPoint>
         <TrustPoint icon={ShieldCheck} title="Read-only">
@@ -89,7 +90,9 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
           <Button onClick={() => void link.start()} loading={starting} disabled={link.busy && !starting}>
             {starting ? "Opening…" : `Continue to ${banking.displayName}`}
           </Button>
-          <p className="text-xs text-muted-foreground">Opens {banking.displayName}&apos;s sign-in{plaid ? " over this page" : " in a window on this page"}.</p>
+          <p className="text-xs text-muted-foreground">
+            Opens {possessive(banking.displayName)} sign-in{plaid ? " over this page" : " in a window on this page"}.
+          </p>
         </div>
       ) : null}
       <FlinksConnectDialog link={link} />

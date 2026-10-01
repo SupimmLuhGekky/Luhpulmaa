@@ -32,11 +32,18 @@ export interface ConnectionsPanelProps {
 /** Provider connections with their health and Sync now / Reconnect / Disconnect. */
 export function ConnectionsPanel({ connections, banking, f, syncing, reconnecting, linkBusy, onSync, onReconnect, onDisconnect }: ConnectionsPanelProps) {
   const canConnect = banking.enabled && banking.configured;
+  const description = !banking.enabled
+    ? "Turned off on this server, so connected accounts aren't updating"
+    : banking.simulated
+      ? "Simulated banks for trying Harbour"
+      : canConnect
+        ? `Accounts that update through ${banking.displayName}`
+        : "Accounts that update automatically";
   return (
     <Card>
       <CardHeading
         title="Bank connections"
-        description={banking.simulated ? "Simulated banks for trying Harbour" : canConnect ? `Accounts that update through ${banking.displayName}` : "Accounts that update automatically"}
+        description={description}
         action={
           canConnect ? (
             <Button size="sm" variant="ghost" asChild>
@@ -85,12 +92,12 @@ export function ConnectionsPanel({ connections, banking, f, syncing, reconnectin
                       </p>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {state.needsReconnect ? (
+                      {state.needsReconnect && banking.enabled ? (
                         <Button size="sm" onClick={() => onReconnect(c)} loading={reconnecting === c.id} disabled={linkBusy && reconnecting !== c.id}>
                           {reconnecting === c.id ? null : <RefreshCw aria-hidden />} Reconnect
                         </Button>
                       ) : null}
-                      {state.canSync ? (
+                      {state.canSync && banking.enabled ? (
                         <Button size="sm" variant="outline" onClick={() => onSync(c)} loading={syncing === c.id} disabled={syncing !== null && syncing !== c.id}>
                           {syncing === c.id ? null : <RefreshCw aria-hidden />} {syncing === c.id ? "Syncing…" : "Sync now"}
                           <span className="sr-only"> {c.institution}</span>

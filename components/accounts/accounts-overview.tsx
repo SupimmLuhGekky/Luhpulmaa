@@ -241,7 +241,7 @@ function AccountRow({ account: a, f }: { account: AccountView; f: AccountFormat 
             {a.isLiability ? <span className="ml-1 text-xs font-normal text-muted-foreground">{credit ? "credit" : "owed"}</span> : null}
           </p>
           {util ? (
-            <div className="ml-auto mt-1.5 w-20 sm:w-28">
+            <div className="ml-auto mt-1.5 w-24 sm:w-28">
               <Progress value={util.usedBps / 100} tone={util.tone} size="sm" label={`${a.name}: ${pct}% of credit limit used`} />
               <p className="tabular mt-1 text-[11px] text-muted-foreground">
                 {pct}% of {f.amount(util.limit, a.currency, { wholeDollars: true })}

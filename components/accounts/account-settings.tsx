@@ -58,6 +58,7 @@ function SettingSwitch({ id, label, description, checked, disabled, onCheckedCha
 export interface AccountSettingsProps {
   account: AccountView;
   connection: ConnectionView | null;
+  bankingEnabled: boolean;
   transactionCount: number;
   f: AccountFormat;
   syncing: boolean;
@@ -69,7 +70,7 @@ export interface AccountSettingsProps {
   onUpdateBalance: () => void;
 }
 
-export function AccountSettings({ account, connection, transactionCount, f, syncing, reconnecting, linkBusy, onSync, onReconnect, onDisconnect, onUpdateBalance }: AccountSettingsProps) {
+export function AccountSettings({ account, connection, bankingEnabled, transactionCount, f, syncing, reconnecting, linkBusy, onSync, onReconnect, onDisconnect, onUpdateBalance }: AccountSettingsProps) {
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
   const [flags, setFlags] = React.useState({ isHidden: account.isHidden, includeInNetWorth: account.includeInNetWorth });
@@ -223,12 +224,12 @@ export function AccountSettings({ account, connection, transactionCount, f, sync
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {state.needsReconnect ? (
+                {state.needsReconnect && bankingEnabled ? (
                   <Button size="sm" onClick={onReconnect} loading={reconnecting} disabled={linkBusy && !reconnecting}>
                     {reconnecting ? null : <RefreshCw aria-hidden />} Reconnect
                   </Button>
                 ) : null}
-                {state.canSync ? (
+                {state.canSync && bankingEnabled ? (
                   <Button size="sm" variant="outline" onClick={onSync} loading={syncing}>
                     {syncing ? null : <RefreshCw aria-hidden />} {syncing ? "Syncing…" : "Sync now"}
                   </Button>

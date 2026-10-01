@@ -10,6 +10,7 @@ import { isEnabled } from "@/lib/flags";
 import { listTransactions } from "@/lib/transactions/service";
 import { transactionFiltersSchema } from "@/lib/transactions/schemas";
 import { AccountDetail, type RecentTransaction } from "@/components/accounts/account-detail";
+import { bankingInfo } from "@/components/accounts/banking-info";
 
 type Params = Promise<{ id: string }>;
 
@@ -64,6 +65,7 @@ export default async function AccountPage({ params }: { params: Params }) {
       recent={recent}
       transactionCount={transactions.total}
       connection={connection}
+      bankingEnabled={bankingInfo().enabled}
       csvEnabled={isEnabled("ENABLE_CSV_IMPORT")}
       now={new Date().toISOString()}
     />

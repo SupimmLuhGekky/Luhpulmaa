@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ConnectBank, type SimulatedInstitution } from "./connect-bank";
 import { CsvGuide } from "./csv-guide";
+import { possessive } from "./format";
 import { ManualAccountForm } from "./manual-account-form";
 import { ADD_METHODS, type AddMethod, type BankingInfo } from "./types";
 
@@ -34,7 +35,7 @@ function connectInfo(banking: BankingInfo): Pick<MethodInfo, "description" | "ba
   if (!banking.enabled || !banking.configured) return { description: "Not available on this server. See your other options.", badge: { label: "Unavailable", variant: "neutral" }, muted: true };
   if (banking.simulated) return { description: "Try a simulated bank with sample data. Nothing real is connected.", badge: { label: "Demo", variant: "info" } };
   if (banking.provider === "PLAID") return { description: "Sign in through Plaid's secure window so balances and transactions update on their own. Neo isn't supported." };
-  return { description: `Sign in through ${banking.displayName}'s secure window so balances and transactions update on their own.` };
+  return { description: `Sign in through ${possessive(banking.displayName)} secure window so balances and transactions update on their own.` };
 }
 
 const PANEL_TITLES: Record<AddMethod, { title: string; description: string }> = {

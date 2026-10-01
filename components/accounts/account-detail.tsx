@@ -43,12 +43,14 @@ export interface AccountDetailProps {
   recent: RecentTransaction[];
   transactionCount: number;
   connection: ConnectionView | null;
+  /** Bank connections are turned on (ENABLE_BANKING); when off, nothing syncs or reconnects. */
+  bankingEnabled: boolean;
   /** CSV import is turned on (ENABLE_CSV_IMPORT). */
   csvEnabled: boolean;
   now: string;
 }
 
-export function AccountDetail({ account, history, last90, recent, transactionCount, connection, csvEnabled, now }: AccountDetailProps) {
+export function AccountDetail({ account, history, last90, recent, transactionCount, connection, bankingEnabled, csvEnabled, now }: AccountDetailProps) {
   const f = useAccountFormat(now);
   const { openQuickAdd } = useShell();
   const link = useBankLink();
@@ -93,7 +95,7 @@ export function AccountDetail({ account, history, last90, recent, transactionCou
             ) : null}
             {account.isManual ? (
               <Button onClick={() => setBalanceOpen(true)}>Update balance</Button>
-            ) : state?.canSync ? (
+            ) : state?.canSync && bankingEnabled ? (
               <Button onClick={sync} loading={syncing === account.id}>
                 {syncing === account.id ? null : <RefreshCw aria-hidden />} {syncing === account.id ? "Syncing…" : "Sync now"}
               </Button>
@@ -103,7 +105,12 @@ export function AccountDetail({ account, history, last90, recent, transactionCou
       />
 
       <div className="space-y-4">
-        {connection && needsAttention(account) ? (
+        {connection && !bankingEnabled ? (
+          <Notice tone="neutral" title="This account isn't updating">
+            Bank connections are turned off on this server. The balance is the last one received{account.lastSyncedAt ? ` ${f.ago(account.lastSyncedAt)}` : ""}, and its transactions are kept.
+          </Notice>
+        ) : null}
+        {connection && bankingEnabled && needsAttention(account) ? (
           <Notice
             tone="warning"
             title={connection.status === "REQUIRES_REAUTH" ? `${institution} needs you to sign in again` : `${institution} couldn't be synced`}
@@ -116,7 +123,7 @@ export function AccountDetail({ account, history, last90, recent, transactionCou
             {connection.lastSyncError ?? "Reconnect to keep this account up to date."}
           </Notice>
         ) : null}
-        {connection && isDisconnected(account) ? (
+        {connection && bankingEnabled && isDisconnected(account) ? (
           <Notice
             tone="neutral"
             title="This account is disconnected"
@@ -140,6 +147,7 @@ export function AccountDetail({ account, history, last90, recent, transactionCou
             <AccountSettings
               account={account}
               connection={connection}
+              bankingEnabled={bankingEnabled}
               transactionCount={transactionCount}
               f={f}
               syncing={syncing === account.id}

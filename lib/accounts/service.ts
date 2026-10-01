@@ -272,10 +272,16 @@ export async function completeConnection(userId: string, publicToken: string, me
   return { connectionId: connection.id, institution: institution.name, accounts, sync };
 }
 
+/** The ENABLE_BANKING kill switch also stops manual syncs, like the daily job. */
+function assertBankingEnabled() {
+  if (!isEnabled("ENABLE_BANKING")) throw new ProviderError("NOT_CONFIGURED", "Bank connections are turned off on this server.");
+}
+
 export async function syncAccount(userId: string, accountId: string) {
   const account = await prisma.account.findFirst({ where: { id: accountId, userId }, select: { connectionId: true, isManual: true } });
   if (!account) throw notFound("Account");
   if (!account.connectionId) throw new AppError("BAD_REQUEST", "Manual accounts don't sync. Update the balance instead.");
+  assertBankingEnabled();
   return syncConnection(userId, account.connectionId, "manual");
 }
 
@@ -283,6 +289,7 @@ export async function syncAccount(userId: string, accountId: string) {
 export async function syncConnectionNow(userId: string, connectionId: string) {
   const c = await prisma.providerConnection.findFirst({ where: { id: connectionId, userId }, select: { id: true } });
   if (!c) throw notFound("Connection");
+  assertBankingEnabled();
   return syncConnection(userId, c.id, "manual");
 }
 
@@ -294,7 +301,7 @@ export async function reconnectSimulatedConnection(userId: string, connectionId:
   const c = await prisma.providerConnection.findFirst({ where: { id: connectionId, userId }, select: { provider: true, institution: { select: { providerInstitutionId: true } } } });
   if (!c) throw notFound("Connection");
   if (c.provider !== "MOCK" || !c.institution) throw new AppError("BAD_REQUEST", "Reconnect this bank through its secure sign-in window.");
-  if (!isEnabled("ENABLE_BANKING")) throw new ProviderError("NOT_CONFIGURED", "Bank connections are turned off on this server.");
+  assertBankingEnabled();
   return completeConnection(userId, `mock-public:${c.institution.providerInstitutionId}`, undefined, { providerType: "MOCK" });
 }
 
