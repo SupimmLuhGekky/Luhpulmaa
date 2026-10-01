@@ -51,12 +51,29 @@ describe("generateInsights", () => {
     const ids = out.map((i) => i.id);
     expect(ids).not.toContain("category-share");
     expect(out.find((i) => i.id === "savings-rate")!.text).toMatch(/^In this selection, you kept/);
-    expect(out.find((i) => i.id === "recurring")!.basis).toMatch(/across all accounts/);
+    expect(out.find((i) => i.id === "recurring")!.text).toBe("Across all your accounts, recurring expenses total approximately $1,500/month.");
+    expect(out.find((i) => i.id === "subscriptions")!.text).toMatch(/^Across all your accounts, subscriptions cost \$50\.00\/month/);
   });
 
   it("does not extrapolate a weekly average from less than a week of data", async () => {
     const range = resolveRange({ range: "custom", from: "2026-09-28", to: "2026-09-30" }, "2026-09-30");
     const out = await generateInsights("u", { range, metrics, categoryBreakdown: breakdown, today: "2026-09-30" });
     expect(out.map((i) => i.id)).not.toContain("weekly-average");
+  });
+
+  it("averages over the days the history covers", async () => {
+    const range = resolveRange({ range: "year" }, "2026-09-30");
+    const out = await generateInsights("u", { range, metrics, categoryBreakdown: breakdown, today: "2026-09-30", coveredFrom: "2026-09-27" });
+    // Only 4 days of history in the range: no weekly figure is extrapolated from them.
+    expect(out.map((i) => i.id)).not.toContain("weekly-average");
+    const longer = await generateInsights("u", { range, metrics, categoryBreakdown: breakdown, today: "2026-09-30", coveredFrom: "2026-04-03" });
+    expect(longer.find((i) => i.id === "weekly-average")!.basis).toBe("Average daily spending $100.00 × 7, over 2026-04-03 → 2026-09-30 (your transactions start on that day).");
+  });
+
+  it("states no change when the previous period has no data to compare with", async () => {
+    const range = resolveRange({ range: "year" }, "2026-09-30");
+    const out = await generateInsights("u", { range, metrics, categoryBreakdown: breakdown, today: "2026-09-30", comparable: false });
+    expect(out.map((i) => i.id)).not.toContain("category-change");
+    expect(out.map((i) => i.id)).toContain("category-share");
   });
 });

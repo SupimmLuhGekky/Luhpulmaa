@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyticsQuerySchema, bucketFor, fillSeries, resolveRange } from "@/lib/analytics/range";
+import { analyticsQueryFromParams, analyticsQuerySchema, averageMonthlySpending, bucketFor, comparisonCoverage, fillSeries, resolveRange } from "@/lib/analytics/range";
 
 const ID_A = "0b6f3c5e-8a1d-4f2b-9c3e-1a2b3c4d5e6f";
 const ID_B = "1c7a4d6f-9b2e-4a3c-8d4f-2b3c4d5e6f70";
@@ -104,5 +104,54 @@ describe("fillSeries", () => {
   it("fills months", () => {
     const out = fillSeries([], "2026-01-15", "2026-03-02", "month");
     expect(out.map((r) => r.period)).toEqual(["2026-01", "2026-02", "2026-03"]);
+  });
+});
+
+describe("comparisonCoverage", () => {
+  const range = { previousFrom: "2026-08-01", previousTo: "2026-08-30" };
+  it("is full when history starts on or before the previous period", () => {
+    expect(comparisonCoverage(range, "2026-04-03")).toBe("full");
+    expect(comparisonCoverage(range, "2026-08-01")).toBe("full");
+  });
+  it("is partial when history starts inside it", () => {
+    expect(comparisonCoverage(range, "2026-08-15")).toBe("partial");
+    expect(comparisonCoverage(range, "2026-08-30")).toBe("partial");
+  });
+  it("is none without data in the previous period", () => {
+    expect(comparisonCoverage(range, "2026-09-02")).toBe("none");
+    expect(comparisonCoverage(range, null)).toBe("none");
+  });
+});
+
+describe("averageMonthlySpending", () => {
+  const monthly = [
+    { period: "2026-03", spending: 0 },
+    { period: "2026-04", spending: 100_000 },
+    { period: "2026-05", spending: 200_000 },
+    { period: "2026-06", spending: 300_000 },
+    { period: "2026-07", spending: 999_999 },
+  ];
+  it("averages complete months since the first transaction, not the empty months before it", () => {
+    expect(averageMonthlySpending(monthly, "2026-04-03", "2026-07-15")).toBe(200_000);
+  });
+  it("keeps only the most recent months", () => {
+    expect(averageMonthlySpending(monthly, "2026-04-03", "2026-07-15", 2)).toBe(250_000);
+  });
+  it("is zero without history or complete months", () => {
+    expect(averageMonthlySpending(monthly, null, "2026-07-15")).toBe(0);
+    expect(averageMonthlySpending(monthly, "2026-07-02", "2026-07-15")).toBe(0);
+  });
+});
+
+describe("analyticsQueryFromParams", () => {
+  it("defaults to this month without parameters", () => {
+    expect(analyticsQueryFromParams({})).toEqual({ range: "month" });
+  });
+  it("keeps valid values and drops bad ones one by one", () => {
+    const q = analyticsQueryFromParams({ range: "custom", from: "2026-02-30", to: "2026-09-30", accounts: `${ID_A},nope,${ID_A}`, categories: ["x"] });
+    expect(q).toEqual({ range: "custom", to: "2026-09-30", accounts: [ID_A] });
+  });
+  it("ignores an unknown range", () => {
+    expect(analyticsQueryFromParams({ range: "decade", categories: `${ID_B}` })).toEqual({ range: "month", categories: [ID_B] });
   });
 });

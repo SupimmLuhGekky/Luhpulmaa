@@ -34,6 +34,37 @@ export const analyticsQuerySchema = z.object({
 
 export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
 
+const uuid = z.string().uuid();
+
+/**
+ * Reads a page's query string one field at a time, so a bad value (a mistyped date,
+ * a stale id) is dropped on its own instead of discarding every other filter.
+ */
+export function analyticsQueryFromParams(params: Record<string, string | string[] | undefined>): AnalyticsQuery {
+  const read = (key: string) => {
+    const v = params[key];
+    const s = Array.isArray(v) ? v[0] : v;
+    return s === undefined || s === "" ? undefined : s;
+  };
+  const ids = (key: string) => {
+    const list = (read(key) ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => uuid.safeParse(s).success);
+    return list.length ? [...new Set(list)].slice(0, 100) : undefined;
+  };
+  const range = z.enum(ANALYTICS_RANGES).safeParse(read("range"));
+  const from = read("from");
+  const to = read("to");
+  return analyticsQuerySchema.parse({
+    range: range.success ? range.data : undefined,
+    from: from && isLocalDate(from) ? from : undefined,
+    to: to && isLocalDate(to) ? to : undefined,
+    accounts: ids("accounts"),
+    categories: ids("categories"),
+  });
+}
+
 export interface ResolvedRange {
   from: LocalDate;
   to: LocalDate;
@@ -136,4 +167,25 @@ export function fillSeries<T extends { period: string; income: number; spending:
     const r = byPeriod.get(period);
     return { period, income: r?.income ?? 0, spending: r?.spending ?? 0 };
   });
+}
+
+/**
+ * How much of the comparison period has data, given the date of the first
+ * transaction: "none" when history starts after it (a change would only show that
+ * the data is new), "partial" when history starts inside it.
+ */
+export function comparisonCoverage(range: { previousFrom: LocalDate; previousTo: LocalDate }, since: LocalDate | null): "full" | "partial" | "none" {
+  if (!since || since > range.previousTo) return "none";
+  return since > range.previousFrom ? "partial" : "full";
+}
+
+/**
+ * Average monthly spending over the last `count` complete months, leaving out months
+ * before the first transaction (they have no data, not zero spending).
+ */
+export function averageMonthlySpending(monthly: { period: string; spending: number }[], since: LocalDate | null, today: LocalDate, count = 6): number {
+  if (!since) return 0;
+  const first = monthKey(since);
+  const months = monthly.filter((m) => m.period >= first && m.period < monthKey(today)).slice(-count);
+  return months.length ? Math.round(months.reduce((a, m) => a + m.spending, 0) / months.length) : 0;
 }

@@ -42,6 +42,10 @@ interface InsightInput {
   today: LocalDate;
   /** True when the figures only cover some accounts or categories. */
   scoped?: boolean;
+  /** False when there is no data for the previous period (no change insight then). */
+  comparable?: boolean;
+  /** First day the history covers when it starts inside the range (averages use it). */
+  coveredFrom?: LocalDate;
 }
 
 export async function generateInsights(_userId: string, input: InsightInput): Promise<Insight[]> {
@@ -50,7 +54,10 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
   const period = range.periodPhrase ?? (range.label.startsWith("This ") ? range.label.toLowerCase() : "in this period");
   const prevLabel = range.comparisonLabel ?? (range.label === "This month" ? "last month" : "the previous period");
   const spendingNoun = input.scoped ? "spending in this selection" : "your spending";
-  const days = daysBetween(range.from, range.to) + 1;
+  const coveredFrom = input.coveredFrom && input.coveredFrom > range.from ? input.coveredFrom : range.from;
+  const days = daysBetween(coveredFrom, range.to) + 1;
+  // Recurring and subscription totals don't follow account or category filters: say so in the sentence.
+  const allAccounts = input.scoped ? "Across all your accounts, " : "";
 
   // Largest category change vs the previous period.
   const changes = (input.categoryChanges ?? categoryBreakdown)
@@ -58,7 +65,7 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
     .map((c) => ({ ...c, delta: c.spending - c.previous }))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   const top = changes[0];
-  if (top && Math.abs(top.delta) >= 2_000) {
+  if (top && Math.abs(top.delta) >= 2_000 && input.comparable !== false) {
     out.push({
       id: "category-change",
       kind: "fact",
@@ -87,7 +94,7 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       id: "recurring",
       kind: "fact",
       tone: "neutral",
-      text: `Your recurring expenses total approximately ${formatCurrency(metrics.recurringMonthly, { wholeDollars: true })}/month.`,
+      text: `${allAccounts}${input.scoped ? "recurring" : "Your recurring"} expenses total approximately ${formatCurrency(metrics.recurringMonthly, { wholeDollars: true })}/month.`,
       basis: `Sum of detected recurring outflows converted to a monthly amount (weekly × 52 / 12, biweekly × 26 / 12, …)${input.scoped ? ", across all accounts" : ""}.`,
     });
   }
@@ -98,7 +105,7 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       kind: "fact",
       tone: "neutral",
       text: `${input.scoped ? "Average weekly spending in this selection" : "Your average weekly spending"} ${period} is ${formatCurrency(metrics.averageDailySpending * 7, { wholeDollars: true })}.`,
-      basis: `Average daily spending ${formatCurrency(metrics.averageDailySpending)} × 7, over ${range.from} → ${range.to}.`,
+      basis: `Average daily spending ${formatCurrency(metrics.averageDailySpending)} × 7, over ${coveredFrom} → ${range.to}${coveredFrom > range.from ? " (your transactions start on that day)" : ""}.`,
     });
   }
   if (metrics.income > 0) {
@@ -118,7 +125,7 @@ export async function generateInsights(_userId: string, input: InsightInput): Pr
       id: "subscriptions",
       kind: "fact",
       tone: "neutral",
-      text: `Subscriptions cost ${formatCurrency(metrics.subscriptionsMonthly)}/month, about ${formatCurrency(metrics.subscriptionsMonthly * 12, { wholeDollars: true })} a year.`,
+      text: `${allAccounts}${input.scoped ? "subscriptions" : "Subscriptions"} cost ${formatCurrency(metrics.subscriptionsMonthly)}/month, about ${formatCurrency(metrics.subscriptionsMonthly * 12, { wholeDollars: true })} a year.`,
       basis: `Active subscriptions converted to monthly and annual amounts${input.scoped ? ", across all accounts" : ""}.`,
     });
   }

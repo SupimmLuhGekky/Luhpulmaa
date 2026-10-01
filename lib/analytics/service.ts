@@ -1,13 +1,13 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { addMonths, daysBetween, startOfMonth, todayIn } from "@/lib/dates";
-import { averageCents, calculateSavingsRate } from "@/lib/finance/calculations";
+import { calculateSavingsRate } from "@/lib/finance/calculations";
 import { mulDiv, ratioBps, type Cents } from "@/lib/finance/money";
 import { monthlyEquivalent } from "@/lib/finance/frequency";
 import { netWorthHistory, netWorthSummary } from "@/lib/networth/service";
-import { incomeSpendingSeries, spendingByCategory, spendingByMerchant, totalIncome, totalSpending, type TxnScope } from "./aggregates";
+import { firstTransactionDate, incomeSpendingSeries, spendingByCategory, spendingByMerchant, totalIncome, totalSpending, type TxnScope } from "./aggregates";
 import { generateInsights } from "./insights";
-import { analyticsQuerySchema, bucketFor, fillSeries, resolveRange, type AnalyticsQuery } from "./range";
+import { analyticsQuerySchema, averageMonthlySpending, bucketFor, comparisonCoverage, fillSeries, resolveRange, type AnalyticsQuery } from "./range";
 
 export { analyticsQuerySchema, resolveRange, type AnalyticsQuery };
 
@@ -19,7 +19,7 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
   const scope: TxnScope = { accountIds: q.accounts, categoryIds: q.categories };
   const scoped = Boolean(q.accounts?.length || q.categories?.length);
 
-  const [income, spending, prevIncome, prevSpending, byCat, prevByCat, merchants, categories, subs, trendFrom] = await Promise.all([
+  const [income, spending, prevIncome, prevSpending, byCat, prevByCat, merchants, categories, subs, since] = await Promise.all([
     totalIncome(userId, range.from, range.to, scope),
     totalSpending(userId, range.from, range.to, scope),
     totalIncome(userId, range.previousFrom, range.previousTo, scope),
@@ -29,8 +29,14 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
     spendingByMerchant(userId, range.from, range.to, 10, scope),
     prisma.category.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true } }),
     prisma.subscription.findMany({ where: { userId, status: "ACTIVE" }, select: { amountCents: true, frequency: true } }),
-    Promise.resolve(addMonths(startOfMonth(today), -11)),
+    firstTransactionDate(userId, scope),
   ]);
+  const trendFrom = addMonths(startOfMonth(today), -11);
+  // With no transactions in the comparison period, a "change" would only say the data is new.
+  const comparison = comparisonCoverage(range, since);
+  // Averages only count days the history covers: an account connected mid-period has no data before.
+  const coveredFrom = since && since > range.from ? since : range.from;
+  const coveredDays = Math.max(1, daysBetween(coveredFrom, range.to) + 1);
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const describe = (id: string | null) => ({
     categoryId: id,
@@ -49,7 +55,7 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
     .sort((a, b) => b.spending - a.spending);
   // Changes vs the previous period over categories present in EITHER period, so a
   // category that dropped to zero still shows up.
-  const categoryChanges = [...new Set([...byCat.keys(), ...prevByCat.keys()])]
+  const categoryChanges = (comparison === "none" ? [] : [...new Set([...byCat.keys(), ...prevByCat.keys()])])
     .map((id) => {
       const current = Math.max(0, byCat.get(id) ?? 0);
       const previous = Math.max(0, prevByCat.get(id) ?? 0);
@@ -68,7 +74,6 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
   const monthly = fillSeries(rawMonthly, trendFrom, today, "month");
   const recurringMonthly = recurringRows.reduce((a, r) => a + monthlyEquivalent(-Number(r.averageAmountCents), r.frequency), 0);
   const subscriptionsMonthly = subs.reduce((a, s) => a + monthlyEquivalent(Number(s.amountCents), s.frequency), 0);
-  const completeMonths = monthly.filter((m) => m.period < today.slice(0, 7));
   const nwHistory = await netWorthHistory(userId, addMonths(today, -12), today);
   const nw = await netWorthSummary(userId, today);
 
@@ -77,8 +82,8 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
     spending,
     savings: income - spending,
     savingsRateBps: calculateSavingsRate(income, spending),
-    averageDailySpending: mulDiv(spending, 1, days),
-    averageMonthlySpending: averageCents(completeMonths.slice(-6).map((m) => m.spending)),
+    averageDailySpending: mulDiv(spending, 1, coveredDays),
+    averageMonthlySpending: averageMonthlySpending(monthly, since, today),
     biggestCategory: categoryBreakdown[0] ?? null,
     biggestMerchant: merchants[0] ?? null,
     recurringMonthly,
@@ -86,7 +91,7 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
     netWorth: nw.netWorth,
     previous: { income: prevIncome, spending: prevSpending },
   };
-  const insights = await generateInsights(userId, { range, metrics, categoryBreakdown, categoryChanges, today, scoped });
+  const insights = await generateInsights(userId, { range, metrics, categoryBreakdown, categoryChanges, today, scoped, comparable: comparison !== "none", coveredFrom });
 
   // Goal savings progress over time (cumulative contributions by month).
   const goalRows = await prisma.$queryRaw<{ month: Date; total: bigint }[]>`
@@ -99,7 +104,11 @@ export async function analytics(userId: string, q: AnalyticsQuery) {
   });
 
   return {
-    range: { ...range, days, bucket },
+    /**
+     * `comparison`: how much of the previous period has data; `dataSince`: first transaction
+     * in scope; `coveredFrom`/`coveredDays`: the part of the range the history covers (averages use it).
+     */
+    range: { ...range, days, bucket, comparison, dataSince: since, coveredFrom, coveredDays },
     filters: { accounts: q.accounts ?? [], categories: q.categories ?? [], scoped },
     metrics,
     categoryBreakdown,

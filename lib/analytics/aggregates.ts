@@ -1,7 +1,7 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { toDbDate, type LocalDate } from "@/lib/dates";
+import { fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { toCents, type Cents } from "@/lib/finance/money";
 
 /**
@@ -44,6 +44,16 @@ const SPENDING_WHERE = (userId: string, from: LocalDate, to: LocalDate, scope?: 
   type: { in: ["EXPENSE", "REFUND"] },
   ...scopeWhere(scope),
 });
+
+/** Date of the earliest counted transaction in scope: where the user's history starts (null when there is none). */
+export async function firstTransactionDate(userId: string, scope?: TxnScope): Promise<LocalDate | null> {
+  const row = await prisma.transaction.findFirst({
+    where: { userId, isTransfer: false, isExcluded: false, ...scopeWhere(scope) },
+    orderBy: { date: "asc" },
+    select: { date: true },
+  });
+  return row ? fromDbDate(row.date) : null;
+}
 
 /** Spending per category. `scope` may also be a plain list of account ids (older callers). */
 export async function spendingByCategory(userId: string, from: LocalDate, to: LocalDate, scope?: TxnScope | string[]): Promise<Map<string | null, Cents>> {
