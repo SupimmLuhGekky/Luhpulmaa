@@ -117,10 +117,27 @@ export function ExportPanel({ today, locale, months }: { today: LocalDate; local
             <li key={type} className="flex items-start gap-3 p-3.5">
               <FileSpreadsheet className="mt-0.5 hidden size-4 shrink-0 text-muted-foreground sm:block" aria-hidden />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  {info.label} <Badge variant="neutral">{info.format}</Badge>
-                </p>
-                <p className="mt-0.5 text-[13px] text-muted-foreground">{info.description}</p>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      {info.label} <Badge variant="neutral">{info.format}</Badge>
+                    </p>
+                    <p className="mt-0.5 text-[13px] text-muted-foreground">{info.description}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => run(type)}
+                    loading={busy === type}
+                    disabled={busy !== null && busy !== type}
+                    aria-label={`Download ${info.label.toLowerCase()} as ${info.format}`}
+                    className="shrink-0 px-2.5 sm:px-3"
+                  >
+                    {busy === type ? null : <Download />}
+                    <span className="hidden sm:inline">Download</span>
+                  </Button>
+                </div>
+                {/* Options use the row's full width, so long month names fit on phones. */}
                 {type === "transactions" ? (
                   <div className="mt-2.5 space-y-2">
                     <Select aria-label="Transactions to include" value={period} onChange={(e) => setPeriod(e.target.value as Period)} options={PERIODS} className="w-full sm:w-64" />
@@ -141,18 +158,6 @@ export function ExportPanel({ today, locale, months }: { today: LocalDate; local
                   <Select aria-label="Budget month" value={month} onChange={(e) => setMonth(e.target.value)} options={months} className="mt-2.5 w-full sm:w-64" />
                 ) : null}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => run(type)}
-                loading={busy === type}
-                disabled={busy !== null && busy !== type}
-                aria-label={`Download ${info.label.toLowerCase()} as ${info.format}`}
-                className="shrink-0 px-2.5 sm:px-3"
-              >
-                {busy === type ? null : <Download />}
-                <span className="hidden sm:inline">Download</span>
-              </Button>
             </li>
           );
         })}

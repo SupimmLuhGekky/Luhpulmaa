@@ -51,8 +51,10 @@ export function SecurityActivity({ events }: { events: SecurityEventRow[] }) {
                   <p className="text-xs text-muted-foreground">
                     {e.device} · {e.network}
                   </p>
+                  {/* Phones: the time goes under the details instead of squeezing them into a column. */}
+                  <time className="block text-xs text-muted-foreground tabular sm:hidden">{e.when}</time>
                 </div>
-                <time className="shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular">{e.when}</time>
+                <time className="hidden shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular sm:block">{e.when}</time>
               </li>
             );
           })}
