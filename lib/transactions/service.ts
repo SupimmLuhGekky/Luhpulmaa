@@ -1,5 +1,5 @@
 import "server-only";
-import type { Prisma, TransactionType } from "@prisma/client";
+import type { CategoryKind, Prisma, TransactionType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
@@ -261,11 +261,17 @@ async function learnFromCorrection(userId: string, merchantKey: string, merchant
 }
 
 export async function updateTransaction(userId: string, id: string, input: z.infer<typeof updateTransactionSchema>) {
-  const existing = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true, isManual: true, categoryId: true, merchantName: true, description: true, merchantId: true, amountCents: true, accountId: true } });
+  const existing = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true, isManual: true, isTransfer: true, categoryId: true, category: { select: { kind: true } }, merchantName: true, description: true, merchantId: true, amountCents: true, accountId: true } });
   if (!existing) throw notFound("Transaction");
+  // Refuse before writing anything, so a rejected edit leaves no learned rule or merchant-wide change behind.
+  if ((input.date !== undefined || input.amountCents !== undefined) && !existing.isManual) {
+    throw new AppError("FORBIDDEN", "Date and amount of imported transactions come from your bank and can't be edited.");
+  }
   const data: Prisma.TransactionUncheckedUpdateInput = {};
   let learned: { learned: boolean; ruleId: string } | null = null;
   let appliedToOthers = 0;
+  // The amount the transaction will have after this edit (a manual amount may change sign).
+  const amount = input.amountCents ?? toCents(existing.amountCents);
 
   if (input.categoryId !== undefined) {
     const cat = await assertCategory(userId, input.categoryId, input.subcategoryId);
@@ -274,25 +280,21 @@ export async function updateTransaction(userId: string, id: string, input: z.inf
     data.categorizedBy = input.categoryId ? "USER" : "UNCATEGORIZED";
     data.categorizedByRuleId = null;
     data.categorizedByLabel = input.categoryId ? "Changed by you" : null;
-    if (cat?.kind === "TRANSFER") {
-      data.isTransfer = true;
-      data.type = "TRANSFER";
-    } else if (cat) {
-      const amount = toCents(existing.amountCents);
-      data.isTransfer = false;
-      data.type = cat.kind === "INCOME" ? (amount > 0 ? "INCOME" : "EXPENSE") : amount > 0 ? "REFUND" : "EXPENSE";
-    }
+    if (cat) Object.assign(data, typeForCategory(cat.kind, amount));
     if (input.categoryId && input.categoryId !== existing.categoryId) {
       const key = normalizeMerchant(existing.merchantName || existing.description);
       learned = await learnFromCorrection(userId, key, existing.merchantId, input.categoryId, input.subcategoryId ?? null);
-      if (input.applyToMerchant && existing.merchantId) {
-        const res = await prisma.transaction.updateMany({
-          where: { userId, merchantId: existing.merchantId, id: { not: id }, categorizedBy: { not: "USER" } },
-          data: { categoryId: input.categoryId, subcategoryId: input.subcategoryId ?? null, categorizedBy: "MERCHANT_RULE", categorizedByRuleId: learned?.ruleId ?? null, categorizedByLabel: "Applied from your change" },
-        });
-        appliedToOthers = res.count;
+      if (input.applyToMerchant && existing.merchantId && cat) {
+        appliedToOthers = await applyCategoryToMany(
+          { userId, merchantId: existing.merchantId, id: { not: id }, categorizedBy: { not: "USER" } },
+          cat.kind,
+          { categoryId: input.categoryId, subcategoryId: input.subcategoryId ?? null, categorizedBy: "MERCHANT_RULE", categorizedByRuleId: learned?.ruleId ?? null, categorizedByLabel: "Applied from your change" },
+        );
       }
     }
+  } else if (input.amountCents !== undefined && !existing.isTransfer && Math.sign(input.amountCents) !== Math.sign(toCents(existing.amountCents))) {
+    // Money out became money in (or the reverse): a purchase is now a refund, income is now spending.
+    data.type = existing.category ? typeForCategory(existing.category.kind, amount).type : amount > 0 ? "INCOME" : "EXPENSE";
   }
   if (input.notes !== undefined) data.notes = input.notes;
   if (input.type !== undefined) data.type = input.type;
@@ -300,15 +302,12 @@ export async function updateTransaction(userId: string, id: string, input: z.inf
   if (input.isTransfer !== undefined) {
     data.isTransfer = input.isTransfer;
     if (input.isTransfer) data.type = "TRANSFER";
-    else if (input.type === undefined) data.type = toCents(existing.amountCents) > 0 ? "INCOME" : "EXPENSE";
+    else if (input.type === undefined) data.type = amount > 0 ? "INCOME" : "EXPENSE";
   }
   if (input.isExcluded !== undefined) data.isExcluded = input.isExcluded;
   if (input.merchantName !== undefined) data.merchantName = input.merchantName;
-  if (input.date !== undefined || input.amountCents !== undefined) {
-    if (!existing.isManual) throw new AppError("FORBIDDEN", "Date and amount of imported transactions come from your bank and can't be edited.");
-    if (input.date) data.date = toDbDate(input.date);
-    if (input.amountCents !== undefined) data.amountCents = input.amountCents;
-  }
+  if (input.date) data.date = toDbDate(input.date);
+  if (input.amountCents !== undefined) data.amountCents = input.amountCents;
   await prisma.transaction.update({ where: { id }, data });
   // A corrected amount on a manual transaction moves a manual account's balance by the difference.
   if (input.amountCents !== undefined && input.amountCents !== toCents(existing.amountCents)) {
@@ -335,23 +334,29 @@ export async function deleteTransaction(userId: string, id: string) {
   await audit(userId, "transaction.deleted", { type: "transaction", id });
 }
 
+/** Type and transfer flag implied by a category for a given signed amount (zero counts as money out). */
+function typeForCategory(kind: CategoryKind, amountCents: number): { type: TransactionType; isTransfer: boolean } {
+  if (kind === "TRANSFER") return { type: "TRANSFER", isTransfer: true };
+  if (kind === "INCOME") return { type: amountCents > 0 ? "INCOME" : "EXPENSE", isTransfer: false };
+  return { type: amountCents > 0 ? "REFUND" : "EXPENSE", isTransfer: false };
+}
+
+/** Applies a category to every matching row, setting type and transfer flags from the category kind and each row's sign. */
+async function applyCategoryToMany(where: Prisma.TransactionWhereInput, kind: CategoryKind | null, data: Prisma.TransactionUncheckedUpdateManyInput): Promise<number> {
+  if (!kind) return (await prisma.transaction.updateMany({ where, data })).count;
+  if (kind === "TRANSFER") return (await prisma.transaction.updateMany({ where, data: { ...data, ...typeForCategory(kind, 0) } })).count;
+  const [inflows, outflows] = await prisma.$transaction([
+    prisma.transaction.updateMany({ where: { ...where, amountCents: { gt: 0 } }, data: { ...data, ...typeForCategory(kind, 1) } }),
+    prisma.transaction.updateMany({ where: { ...where, amountCents: { lte: 0 } }, data: { ...data, ...typeForCategory(kind, 0) } }),
+  ]);
+  return inflows.count + outflows.count;
+}
+
 /** Re-categorises many transactions at once, keeping type and transfer flags consistent with the category (as a single edit does). */
 export async function bulkUpdateCategory(userId: string, ids: string[], categoryId: string | null) {
   const cat = await assertCategory(userId, categoryId);
-  const where: Prisma.TransactionWhereInput = { userId, id: { in: ids } };
   const base = { categoryId, subcategoryId: null, categorizedBy: categoryId ? ("USER" as const) : ("UNCATEGORIZED" as const), categorizedByLabel: categoryId ? "Changed by you" : null, categorizedByRuleId: null };
-  let count: number;
-  if (!cat) {
-    count = (await prisma.transaction.updateMany({ where, data: base })).count;
-  } else if (cat.kind === "TRANSFER") {
-    count = (await prisma.transaction.updateMany({ where, data: { ...base, isTransfer: true, type: "TRANSFER" } })).count;
-  } else {
-    const [inflows, outflows] = await prisma.$transaction([
-      prisma.transaction.updateMany({ where: { ...where, amountCents: { gt: 0 } }, data: { ...base, isTransfer: false, type: cat.kind === "INCOME" ? "INCOME" : "REFUND" } }),
-      prisma.transaction.updateMany({ where: { ...where, amountCents: { lt: 0 } }, data: { ...base, isTransfer: false, type: "EXPENSE" } }),
-    ]);
-    count = inflows.count + outflows.count;
-  }
+  const count = await applyCategoryToMany({ userId, id: { in: ids } }, cat?.kind ?? null, base);
   await audit(userId, "transaction.updated", { type: "transaction" }, { bulk: true, count });
   return count;
 }

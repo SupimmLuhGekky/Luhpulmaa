@@ -1,5 +1,5 @@
 import "server-only";
-import type { CategorizationSource, Prisma } from "@prisma/client";
+import type { CategorizationSource, Prisma, TransactionType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { addDays, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { toCents } from "@/lib/finance/money";
@@ -98,7 +98,8 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
   }
 
   for (const row of rows) {
-    const match = findDuplicate(row, existing, claimed);
+    // Manual entries are deliberate (two identical coffees are two coffees), so they skip duplicate matching.
+    const match = row.isManual ? null : findDuplicate(row, existing, claimed);
     if (match) {
       claimed.add(match.existingId);
       const target = existing.find((e) => e.id === match.existingId)!;
@@ -142,8 +143,10 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
         subcategoryId = row.subcategoryId && chosen.subcategories.some((s) => s.id === row.subcategoryId) ? row.subcategoryId : null;
         categorizedBy = "USER";
         label = "Chosen by you";
-        cat = { ...cat, ...(chosen.kind === "TRANSFER" ? { type: "TRANSFER", isTransfer: true } : {}) };
-        if (chosen.kind === "INCOME" && row.amountCents > 0) cat = { ...cat, type: "INCOME", isTransfer: false };
+        // The chosen category decides the type, as when the user edits a transaction ("Virement Interac" filed as Rent is spending).
+        const type: TransactionType =
+          chosen.kind === "TRANSFER" ? "TRANSFER" : chosen.kind === "INCOME" ? (row.amountCents > 0 ? "INCOME" : "EXPENSE") : row.amountCents > 0 ? "REFUND" : "EXPENSE";
+        cat = { ...cat, type, isTransfer: type === "TRANSFER" };
       }
     } else if (!categoryId) {
       const ai = await suggestCategoryWithAI(userId, { description: row.description, merchantName: row.merchantName ?? null, amountCents: row.amountCents }, ctx);
