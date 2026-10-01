@@ -35,9 +35,17 @@ export async function listCategories(userId: string) {
 
 export type CategoryOption = Awaited<ReturnType<typeof listCategories>>[number];
 
+function isUniqueViolation(error: unknown) {
+  return (error as { code?: string } | null)?.code === "P2002";
+}
+
 export async function createCategory(userId: string, input: z.infer<typeof categoryInputSchema>) {
   const count = await prisma.category.count({ where: { userId } });
-  const cat = await prisma.category.create({ data: { userId, ...input, sortOrder: count } });
+  if (count >= 200) throw new AppError("CONFLICT", "You can have up to 200 categories.");
+  const cat = await prisma.category.create({ data: { userId, ...input, sortOrder: count } }).catch((error: unknown) => {
+    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `You already have a category called “${input.name}”.`);
+    throw error;
+  });
   await audit(userId, "category.created", { type: "category", id: cat.id }, { name: cat.name });
   return cat;
 }
@@ -45,7 +53,10 @@ export async function createCategory(userId: string, input: z.infer<typeof categ
 export async function updateCategory(userId: string, id: string, input: Partial<z.infer<typeof categoryInputSchema>> & { isHidden?: boolean }) {
   const cat = await prisma.category.findFirst({ where: { id, userId } });
   if (!cat) throw notFound("Category");
-  const updated = await prisma.category.update({ where: { id }, data: input });
+  const updated = await prisma.category.update({ where: { id }, data: input }).catch((error: unknown) => {
+    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `You already have a category called “${input.name}”.`);
+    throw error;
+  });
   await audit(userId, "category.updated", { type: "category", id }, { fields: Object.keys(input) });
   return updated;
 }
@@ -63,6 +74,9 @@ export async function reorderCategories(userId: string, orderedIds: string[]) {
 export async function deleteCategory(userId: string, id: string, reassignTo?: string | null) {
   const cat = await prisma.category.findFirst({ where: { id, userId }, include: { _count: { select: { transactions: true } } } });
   if (!cat) throw notFound("Category");
+  // Built-in categories anchor automatic categorisation, transfers, subscriptions and
+  // safe-to-spend; they can be renamed or hidden but not deleted.
+  if (cat.systemKey) throw new AppError("FORBIDDEN", "Built-in categories can't be deleted. You can hide it instead.");
   if (cat._count.transactions > 0) {
     if (reassignTo === undefined) {
       throw new AppError("CONFLICT", `${cat._count.transactions} transactions use this category. Choose where to move them first.`);
@@ -82,13 +96,22 @@ export async function createSubcategory(userId: string, categoryId: string, inpu
   const cat = await prisma.category.findFirst({ where: { id: categoryId, userId } });
   if (!cat) throw notFound("Category");
   const count = await prisma.subcategory.count({ where: { categoryId } });
-  return prisma.subcategory.create({ data: { userId, categoryId, name: input.name, icon: input.icon ?? null, sortOrder: count } });
+  if (count >= 50) throw new AppError("CONFLICT", "A category can have up to 50 subcategories.");
+  const sub = await prisma.subcategory.create({ data: { userId, categoryId, name: input.name, icon: input.icon ?? null, sortOrder: count } }).catch((error: unknown) => {
+    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `${cat.name} already has a subcategory called “${input.name}”.`);
+    throw error;
+  });
+  await audit(userId, "category.updated", { type: "category", id: categoryId }, { subcategoryAdded: sub.id });
+  return sub;
 }
 
 export async function updateSubcategory(userId: string, id: string, input: Partial<z.infer<typeof subcategoryInputSchema>>) {
   const sub = await prisma.subcategory.findFirst({ where: { id, userId } });
   if (!sub) throw notFound("Subcategory");
-  return prisma.subcategory.update({ where: { id }, data: input });
+  return prisma.subcategory.update({ where: { id }, data: input }).catch((error: unknown) => {
+    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `This category already has a subcategory called “${input.name}”.`);
+    throw error;
+  });
 }
 
 export async function deleteSubcategory(userId: string, id: string) {
@@ -96,6 +119,7 @@ export async function deleteSubcategory(userId: string, id: string) {
   if (!sub) throw notFound("Subcategory");
   // Transactions keep their parent category; the subcategory link is cleared (onDelete: SetNull).
   await prisma.subcategory.delete({ where: { id } });
+  await audit(userId, "category.updated", { type: "category", id: sub.categoryId }, { subcategoryDeleted: id });
 }
 
 // Merchant rules (learned + user-defined) ─────────────────────────────────────
@@ -130,4 +154,5 @@ export async function createMerchantRule(userId: string, input: z.infer<typeof m
 export async function deleteMerchantRule(userId: string, id: string) {
   const { count } = await prisma.merchantRule.deleteMany({ where: { id, userId } });
   if (!count) throw notFound("Rule");
+  await audit(userId, "category.updated", { type: "merchant_rule", id }, { deleted: true });
 }

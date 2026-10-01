@@ -328,6 +328,32 @@ function localeFor(locale: string) {
   return locale.startsWith("fr") ? "fr-CA" : "en-CA";
 }
 
+/** Human-readable names for the read-only tools, shown under each answer. */
+export const ASSISTANT_TOOL_LABELS: Record<string, string> = {
+  get_financial_overview: "Net worth & safe-to-spend",
+  get_spending_by_category: "Spending by category",
+  search_transactions: "Transaction search",
+  get_budget_status: "This month's budget",
+  get_goals: "Savings goals",
+  get_upcoming_bills: "Upcoming bills",
+  get_subscriptions: "Subscriptions",
+  get_cash_flow_forecast: "Cash-flow forecast",
+};
+
+export interface AssistantStatus {
+  /** ENABLE_AI_ASSISTANT is on for this server. */
+  enabled: boolean;
+  /** An API key is configured. */
+  configured: boolean;
+  /** The user turned on AI features in Settings → Data & privacy. */
+  optedIn: boolean;
+}
+
+export async function assistantStatus(userId: string): Promise<AssistantStatus> {
+  const prefs = await userPreferences(userId);
+  return { enabled: isEnabled("ENABLE_AI_ASSISTANT"), configured: Boolean(aiClient()), optedIn: prefs.aiOptIn };
+}
+
 /**
  * Answers a question with a manual tool-use loop. Returns the explanation text plus
  * facts computed by our own code from whatever data the model looked up.
@@ -353,7 +379,8 @@ export async function askAssistant(userId: string, input: z.infer<typeof assista
     for (let step = 0; step < 6; step++) {
       const response = await client.messages.create({
         model: AI_MODEL,
-        max_tokens: 4096,
+        // Adaptive thinking shares this budget with the answer; keep room so replies aren't cut off.
+        max_tokens: 16000,
         system,
         tools: TOOLS,
         thinking: { type: "adaptive" },

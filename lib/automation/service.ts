@@ -1,12 +1,26 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
-import { addDays, fromDbDate, todayIn, toDbDate } from "@/lib/dates";
-import { toCents } from "@/lib/finance/money";
+import { addDays, fromDbDate, monthKey, todayIn, toDbDate } from "@/lib/dates";
+import { formatCurrency, toCents } from "@/lib/finance/money";
+import { budgetView, findBudget } from "@/lib/budget/service";
 import { evaluateConditions, type Condition } from "./conditions";
-import { automationInputSchema, type AutomationInput } from "./schemas";
+import { scheduledPlannedPerRun, scheduledRunDates, transactionEffects } from "./preview";
+import {
+  ACTION_TRIGGERS,
+  actionTypeSchema,
+  automationInputSchema,
+  conditionInputSchema,
+  conditionProblem,
+  isTransactionTrigger,
+  triggerConfigSchema,
+  triggerSchema,
+  type AutomationFormInput,
+  type AutomationInput,
+} from "./schemas";
 import { runTransactionAutomations } from "./engine";
 
 const include = {
@@ -81,7 +95,7 @@ function partsData(input: AutomationInput) {
   };
 }
 
-export async function createAutomation(userId: string, raw: AutomationInput) {
+export async function createAutomation(userId: string, raw: AutomationFormInput) {
   const input = automationInputSchema.parse(raw);
   await assertReferences(userId, input);
   const count = await prisma.automation.count({ where: { userId } });
@@ -103,7 +117,7 @@ export async function createAutomation(userId: string, raw: AutomationInput) {
   return toAutomationDTO(created);
 }
 
-export async function updateAutomation(userId: string, id: string, raw: AutomationInput) {
+export async function updateAutomation(userId: string, id: string, raw: AutomationFormInput) {
   const input = automationInputSchema.parse(raw);
   const existing = await prisma.automation.findFirst({ where: { id, userId }, select: { id: true } });
   if (!existing) throw notFound("Automation");
@@ -141,58 +155,146 @@ export async function deleteAutomation(userId: string, id: string) {
   await audit(userId, "automation.deleted", { type: "automation", id });
 }
 
-export async function listRuns(userId: string, opts: { automationId?: string; take?: number } = {}) {
+export async function listRuns(userId: string, opts: { automationId?: string; take?: number; cursor?: string } = {}) {
+  const take = Math.min(opts.take ?? 30, 100);
   const runs = await prisma.automationRun.findMany({
     where: { userId, ...(opts.automationId ? { automationId: opts.automationId } : {}), status: { not: "SKIPPED" } },
-    orderBy: { executedAt: "desc" },
-    take: Math.min(opts.take ?? 30, 100),
-    include: { automation: { select: { id: true, name: true } }, transaction: { select: { id: true, merchantName: true, description: true, amountCents: true } } },
+    orderBy: [{ executedAt: "desc" }, { id: "desc" }],
+    take: take + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    include: { automation: { select: { id: true, name: true } }, transaction: { select: { id: true, merchantName: true, description: true, amountCents: true, date: true } } },
   });
-  return runs.map((r) => ({
+  const hasMore = runs.length > take;
+  const items = runs.slice(0, take).map((r) => ({
     id: r.id,
     status: r.status,
     summary: r.summary,
     executedAt: r.executedAt.toISOString(),
+    /** "txn:…", "month:2026-10", "week:…", "sub:…", "budget:…" — the event that triggered the run. */
+    event: r.idempotencyKey.split(":")[0] ?? "event",
     automation: r.automation,
-    transaction: r.transaction ? { id: r.transaction.id, label: r.transaction.merchantName ?? r.transaction.description, amountCents: toCents(r.transaction.amountCents) } : null,
+    transaction: r.transaction
+      ? { id: r.transaction.id, label: r.transaction.merchantName ?? r.transaction.description, amountCents: toCents(r.transaction.amountCents), date: fromDbDate(r.transaction.date) }
+      : null,
   }));
+  return { items, nextCursor: hasMore ? items[items.length - 1].id : null };
 }
 
+export type AutomationRunDTO = Awaited<ReturnType<typeof listRuns>>["items"][number];
+
+export const PREVIEW_DAYS = 90;
+
+export const previewInputSchema = z.object({
+  trigger: triggerSchema,
+  triggerConfig: triggerConfigSchema.default({}),
+  conditionLogic: z.enum(["ALL", "ANY"]).default("ALL"),
+  conditions: z.array(conditionInputSchema).max(10).default([]),
+  /** Actions may still be incomplete while the user is building; invalid ones are ignored. */
+  actions: z.array(z.object({ type: actionTypeSchema, config: z.record(z.unknown()).default({}) })).max(10).default([]),
+});
+
+export type PreviewInput = z.input<typeof previewInputSchema>;
+
+export interface PreviewExample {
+  id: string;
+  label: string;
+  date: string;
+  amountCents: number;
+  effects: string[];
+}
+
+export type AutomationPreview =
+  | { kind: "transactions"; days: number; from: string; sampled: number; matched: number; affected: number; plannedCents: number; examples: PreviewExample[] }
+  | { kind: "schedule"; days: number; from: string; runs: string[]; plannedPerRunCents: number; plannedCents: number; notifies: boolean }
+  | { kind: "subscriptions"; days: number; from: string; detected: { name: string; amountCents: number; date: string }[] }
+  | { kind: "budget"; month: string | null; lines: { name: string; usedPercent: number }[]; thresholdPercent: number | null };
+
 /**
- * Dry run for the builder: which of the last 90 days' transactions would the
- * conditions match? Nothing is changed.
+ * Dry run for the builder: what the automation would have done over the last 90 days.
+ * Transactions are matched with the same condition logic as the engine and each action's
+ * effect is computed, but nothing is written. Goal amounts are planned allocations only.
  */
-export async function previewAutomation(userId: string, input: Pick<AutomationInput, "trigger" | "conditions" | "conditionLogic">) {
-  if (input.trigger !== "TRANSACTION_CREATED" && input.trigger !== "INCOME_RECEIVED") return { matched: 0, sampled: 0, examples: [] };
+export async function previewAutomation(userId: string, raw: PreviewInput, money: (cents: number) => string = (c) => formatCurrency(c)): Promise<AutomationPreview> {
+  const input = previewInputSchema.parse(raw);
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
-  const since = addDays(todayIn(user.timeZone), -90);
-  const txns = await prisma.transaction.findMany({
-    where: { userId, date: { gte: toDbDate(since) }, ...(input.trigger === "INCOME_RECEIVED" ? { type: "INCOME", amountCents: { gt: 0 } } : {}) },
-    select: { id: true, merchantName: true, description: true, amountCents: true, categoryId: true, accountId: true, type: true, date: true },
-    orderBy: { date: "desc" },
-    take: 2000,
-  });
-  const matches = txns.filter((t) => evaluateConditions({ ...t, amountCents: toCents(t.amountCents) }, input.conditions as Condition[], input.conditionLogic));
-  return {
-    matched: matches.length,
-    sampled: txns.length,
-    examples: matches.slice(0, 5).map((t) => ({ id: t.id, label: t.merchantName ?? t.description, amountCents: toCents(t.amountCents), date: fromDbDate(t.date) })),
-  };
+  const today = todayIn(user.timeZone);
+  const from = addDays(today, -(PREVIEW_DAYS - 1));
+  const conditions = input.conditions.filter((c) => !conditionProblem(c)) as Condition[];
+
+  if (isTransactionTrigger(input.trigger)) {
+    const [txns, categories, goals] = await Promise.all([
+      prisma.transaction.findMany({
+        where: { userId, date: { gte: toDbDate(from) }, ...(input.trigger === "INCOME_RECEIVED" ? { type: "INCOME", amountCents: { gt: 0 } } : {}) },
+        select: { id: true, merchantName: true, description: true, amountCents: true, categoryId: true, accountId: true, type: true, date: true, isTransfer: true },
+        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        take: 2000,
+      }),
+      prisma.category.findMany({ where: { userId }, select: { id: true, name: true, kind: true } }),
+      prisma.goal.findMany({ where: { userId }, select: { id: true, name: true } }),
+    ]);
+    const catById = new Map(categories.map((c) => [c.id, c]));
+    const goalById = new Map(goals.map((g) => [g.id, g.name]));
+    const ctx = { categoryName: (id: string) => catById.get(id)?.name, goalName: (id: string) => goalById.get(id), money, isTransferCategory: (id: string) => catById.get(id)?.kind === "TRANSFER" };
+    const actions = input.actions.filter((a) => ACTION_TRIGGERS[a.type].includes(input.trigger));
+    let matched = 0;
+    let affected = 0;
+    let plannedCents = 0;
+    const examples: PreviewExample[] = [];
+    for (const t of txns) {
+      const amountCents = toCents(t.amountCents);
+      if (!evaluateConditions({ ...t, amountCents }, conditions, input.conditionLogic)) continue;
+      matched++;
+      const effects = transactionEffects({ amountCents, categoryId: t.categoryId, merchantName: t.merchantName, description: t.description, isTransfer: t.isTransfer }, actions, ctx);
+      if (effects.length) affected++;
+      plannedCents += effects.reduce((sum, e) => sum + e.plannedCents, 0);
+      if (examples.length < 8) examples.push({ id: t.id, label: t.merchantName ?? t.description, date: fromDbDate(t.date), amountCents, effects: effects.map((e) => e.text) });
+    }
+    return { kind: "transactions", days: PREVIEW_DAYS, from, sampled: txns.length, matched, affected, plannedCents, examples };
+  }
+
+  if (input.trigger === "SCHEDULE_MONTHLY" || input.trigger === "SCHEDULE_WEEKLY") {
+    const runs = scheduledRunDates(input.trigger, input.triggerConfig, from, today);
+    const perRun = scheduledPlannedPerRun(input.actions);
+    return { kind: "schedule", days: PREVIEW_DAYS, from, runs, plannedPerRunCents: perRun, plannedCents: perRun * runs.length, notifies: input.actions.some((a) => a.type === "NOTIFY") };
+  }
+
+  if (input.trigger === "SUBSCRIPTION_DETECTED") {
+    const subs = await prisma.subscription.findMany({
+      where: { userId, isDetected: true, createdAt: { gte: toDbDate(from) } },
+      select: { name: true, amountCents: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return { kind: "subscriptions", days: PREVIEW_DAYS, from, detected: subs.map((s) => ({ name: s.name, amountCents: toCents(s.amountCents), date: todayIn(user.timeZone, s.createdAt) })) };
+  }
+
+  // BUDGET_THRESHOLD: show which of this month's budget lines are already past the threshold.
+  const threshold = input.triggerConfig.thresholdPercent ?? null;
+  const budget = await findBudget(userId, "MONTHLY", `${monthKey(today)}-01`);
+  if (!budget || !threshold) return { kind: "budget", month: budget ? monthKey(today) : null, lines: [], thresholdPercent: threshold };
+  const view = await budgetView(userId, budget.id);
+  const lines = view.lines
+    .filter((l) => (!input.triggerConfig.categoryId || l.categoryId === input.triggerConfig.categoryId) && l.available > 0 && Math.floor(l.usedBps / 100) >= threshold)
+    .map((l) => ({ name: l.name, usedPercent: Math.floor(l.usedBps / 100) }));
+  return { kind: "budget", month: monthKey(today), lines, thresholdPercent: threshold };
 }
 
 /**
  * Applies a transaction automation to matching transactions from the last N days
- * (opt-in "run on existing transactions"). Idempotent through run keys.
+ * (opt-in "run on existing transactions"). Idempotent through run keys, so
+ * transactions it already handled are never touched twice.
  */
 export async function applyToRecent(userId: string, id: string, days = 30) {
   const a = await prisma.automation.findFirst({ where: { id, userId }, select: { trigger: true, isActive: true } });
   if (!a) throw notFound("Automation");
-  if (a.trigger !== "TRANSACTION_CREATED" && a.trigger !== "INCOME_RECEIVED") throw new AppError("BAD_REQUEST", "Only transaction automations can be applied to past transactions.");
+  if (!isTransactionTrigger(a.trigger)) throw new AppError("BAD_REQUEST", "Only transaction automations can be applied to past transactions.");
   if (!a.isActive) throw new AppError("BAD_REQUEST", "Turn the automation on first.");
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
   const since = addDays(todayIn(user.timeZone), -Math.min(Math.max(days, 1), 365));
   const ids = (await prisma.transaction.findMany({ where: { userId, date: { gte: toDbDate(since) } }, select: { id: true } })).map((t) => t.id);
-  return runTransactionAutomations(userId, ids);
+  const { executed } = await runTransactionAutomations(userId, ids, { onlyAutomationId: id });
+  await audit(userId, "automation.updated", { type: "automation", id }, { appliedToRecentDays: days, applied: executed });
+  return { applied: executed, scanned: ids.length };
 }
 
 /** Ready-made recipes shown in the builder (the user still reviews and saves them). */

@@ -71,6 +71,10 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
         },
       });
       txn.categoryId = cat.id;
+      if (cat.kind === "TRANSFER") {
+        txn.isTransfer = true;
+        txn.type = "TRANSFER";
+      }
       return `category → ${cat.name}`;
     }
     case "ADD_TAG": {
@@ -81,6 +85,9 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
     }
     case "MARK_TRANSFER":
       await prisma.transaction.update({ where: { id: txn.id }, data: { isTransfer: true, type: "TRANSFER" } });
+      // Later actions and automations in the same run (e.g. a round-up) must see it as a transfer too.
+      txn.isTransfer = true;
+      txn.type = "TRANSFER";
       return "marked as transfer";
     case "MARK_RECURRING":
       await prisma.transaction.update({ where: { id: txn.id }, data: { isRecurring: true } });
@@ -147,9 +154,10 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
  * Runs TRANSACTION_CREATED (and INCOME_RECEIVED for income) automations on newly
  * imported/created transactions. Safe to call repeatedly with the same ids.
  */
-export async function runTransactionAutomations(userId: string, transactionIds: string[]) {
+export async function runTransactionAutomations(userId: string, transactionIds: string[], opts: { onlyAutomationId?: string } = {}) {
   if (!transactionIds.length) return { executed: 0 };
-  const automations = await loadAutomations(userId, ["TRANSACTION_CREATED", "INCOME_RECEIVED"]);
+  // `onlyAutomationId` limits a run to one automation ("apply this one to recent transactions").
+  const automations = (await loadAutomations(userId, ["TRANSACTION_CREATED", "INCOME_RECEIVED"])).filter((a) => !opts.onlyAutomationId || a.id === opts.onlyAutomationId);
   if (!automations.length) return { executed: 0 };
   const txns = await prisma.transaction.findMany({
     where: { userId, id: { in: transactionIds } },

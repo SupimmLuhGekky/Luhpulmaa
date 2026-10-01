@@ -17,9 +17,14 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, { label: string;
 
 export const NOTIFICATION_TYPES = Object.keys(NOTIFICATION_TYPE_LABELS) as NotificationType[];
 
+/** Channels a new account starts with: everything in-app, email only for security and sync problems. */
+export function defaultChannels(type: NotificationType) {
+  return { inApp: true, email: type === "SYSTEM" || type === "SYNC_FAILURE", push: false, sms: false };
+}
+
 export async function provisionNotificationPreferences(tx: Tx, userId: string) {
   await tx.notificationPreference.createMany({
-    data: NOTIFICATION_TYPES.map((type) => ({ userId, type, inApp: true, email: type === "SYSTEM" || type === "SYNC_FAILURE" })),
+    data: NOTIFICATION_TYPES.map((type) => ({ userId, type, ...defaultChannels(type) })),
     skipDuplicates: true,
   });
 }
