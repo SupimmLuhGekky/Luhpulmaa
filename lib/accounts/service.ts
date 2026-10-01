@@ -10,31 +10,13 @@ import { encryptSecret, decryptSecret } from "@/lib/security/encryption";
 import { getDefaultProvider, getProvider } from "@/lib/banking/registry";
 import { ProviderError } from "@/lib/banking/types";
 import { MOCK_INSTITUTIONS } from "@/lib/banking/providers/mock-data";
+import { isEnabled } from "@/lib/flags";
 import { syncConnection } from "@/lib/sync/service";
 import { recordNetWorthSnapshot } from "@/lib/networth/service";
-import { isLiability } from "./types";
+import { isLiability, manualAvailableBalance } from "./types";
+import type { accountUpdateSchema, manualAccountSchema } from "./schemas";
 
-export const ACCOUNT_TYPES = ["CHEQUING", "SAVINGS", "CASH", "CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "INVESTMENT", "OTHER_ASSET", "OTHER_LIABILITY"] as const;
-
-export const manualAccountSchema = z.object({
-  name: z.string().trim().min(1, "Required").max(60),
-  type: z.enum(ACCOUNT_TYPES),
-  institutionName: z.string().trim().max(60).optional(),
-  currency: z.enum(["CAD", "USD", "EUR", "GBP"]).default("CAD"),
-  /** Assets: amount held. Liabilities: amount owed (positive). */
-  balanceCents: z.number().int().min(-100_000_000_00).max(100_000_000_00),
-  creditLimitCents: z.number().int().min(0).nullable().optional(),
-  mask: z.string().trim().regex(/^\d{0,4}$/).optional(),
-});
-
-export const accountUpdateSchema = z.object({
-  name: z.string().trim().min(1).max(60).optional(),
-  isHidden: z.boolean().optional(),
-  includeInNetWorth: z.boolean().optional(),
-  /** Manual accounts only. */
-  balanceCents: z.number().int().optional(),
-  type: z.enum(ACCOUNT_TYPES).optional(),
-});
+export { ACCOUNT_TYPES, accountUpdateSchema, manualAccountSchema } from "./schemas";
 
 const accountSelect = {
   id: true,
@@ -146,7 +128,12 @@ export async function accountDetail(userId: string, id: string, timeZone: string
 }
 
 export async function createManualAccount(userId: string, input: z.infer<typeof manualAccountSchema>) {
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true, currency: true } });
+  // Without multi-currency support, totals add balances as-is, so every account uses the user's currency.
+  if (input.currency !== user.currency && !isEnabled("ENABLE_MULTI_CURRENCY")) {
+    const message = `Accounts in other currencies aren't supported yet. Use ${user.currency}.`;
+    throw new AppError("VALIDATION_FAILED", message, { fieldErrors: { currency: [message] } });
+  }
   let institutionId: string | null = null;
   if (input.institutionName) {
     const inst = await prisma.institution.upsert({
@@ -164,7 +151,7 @@ export async function createManualAccount(userId: string, input: z.infer<typeof 
       type: input.type,
       currency: input.currency,
       currentBalanceCents: input.balanceCents,
-      availableBalanceCents: isLiability(input.type) && input.creditLimitCents ? input.creditLimitCents - input.balanceCents : input.balanceCents,
+      availableBalanceCents: manualAvailableBalance(input.type, input.balanceCents, input.creditLimitCents),
       creditLimitCents: input.creditLimitCents ?? null,
       mask: input.mask || null,
       isManual: true,
@@ -179,30 +166,44 @@ export async function createManualAccount(userId: string, input: z.infer<typeof 
   return account;
 }
 
+async function userToday(userId: string) {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
+  return todayIn(user.timeZone);
+}
+
 export async function updateAccount(userId: string, id: string, input: z.infer<typeof accountUpdateSchema>) {
   const existing = await prisma.account.findFirst({ where: { id, userId } });
   if (!existing) throw notFound("Account");
-  if ((input.balanceCents !== undefined || input.type !== undefined) && !existing.isManual) {
-    throw new AppError("FORBIDDEN", "Balances and types of connected accounts come from your bank.");
+  const bankOwned = input.balanceCents !== undefined || input.type !== undefined || input.creditLimitCents !== undefined;
+  if (bankOwned && !existing.isManual) {
+    throw new AppError("FORBIDDEN", "Balances, types and credit limits of connected accounts come from your bank.");
   }
+  // Keep the stored available balance consistent with the (possibly new) type, balance and limit.
+  const type = input.type ?? existing.type;
+  const balance = input.balanceCents ?? toCents(existing.currentBalanceCents);
+  const limit = input.creditLimitCents !== undefined ? input.creditLimitCents : existing.creditLimitCents === null ? null : toCents(existing.creditLimitCents);
   const account = await prisma.account.update({
     where: { id },
     data: {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.isHidden !== undefined ? { isHidden: input.isHidden } : {}),
       ...(input.includeInNetWorth !== undefined ? { includeInNetWorth: input.includeInNetWorth } : {}),
-      ...(input.balanceCents !== undefined ? { currentBalanceCents: input.balanceCents, availableBalanceCents: input.balanceCents } : {}),
+      ...(input.balanceCents !== undefined ? { currentBalanceCents: input.balanceCents } : {}),
       ...(input.type !== undefined ? { type: input.type } : {}),
+      ...(input.creditLimitCents !== undefined ? { creditLimitCents: input.creditLimitCents } : {}),
+      ...(bankOwned ? { availableBalanceCents: manualAvailableBalance(type, balance, limit) } : {}),
     },
   });
-  if (input.balanceCents !== undefined) {
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
-    const today = todayIn(user.timeZone);
-    await prisma.accountBalanceSnapshot.upsert({
-      where: { accountId_date: { accountId: id, date: toDbDate(today) } },
-      update: { balanceCents: input.balanceCents },
-      create: { userId, accountId: id, date: toDbDate(today), balanceCents: input.balanceCents },
-    });
+  if (input.balanceCents !== undefined || input.type !== undefined || input.includeInNetWorth !== undefined) {
+    const today = await userToday(userId);
+    if (input.balanceCents !== undefined) {
+      await prisma.accountBalanceSnapshot.upsert({
+        where: { accountId_date: { accountId: id, date: toDbDate(today) } },
+        update: { balanceCents: input.balanceCents },
+        create: { userId, accountId: id, date: toDbDate(today), balanceCents: input.balanceCents },
+      });
+    }
+    // Balance, asset/debt type and "include in net worth" all change today's net worth.
     await recordNetWorthSnapshot(userId, today);
   }
   await audit(userId, "account.updated", { type: "account", id }, { fields: Object.keys(input) });
@@ -215,6 +216,7 @@ export async function deleteManualAccount(userId: string, id: string) {
   if (!existing) throw notFound("Account");
   if (!existing.isManual) throw new AppError("FORBIDDEN", "Disconnect the bank connection to remove this account.");
   await prisma.account.delete({ where: { id } });
+  await recordNetWorthSnapshot(userId, await userToday(userId));
   await audit(userId, "account.deleted", { type: "account", id });
 }
 
@@ -277,6 +279,25 @@ export async function syncAccount(userId: string, accountId: string) {
   return syncConnection(userId, account.connectionId, "manual");
 }
 
+/** "Sync now" for a whole connection (every account at that institution). */
+export async function syncConnectionNow(userId: string, connectionId: string) {
+  const c = await prisma.providerConnection.findFirst({ where: { id: connectionId, userId }, select: { id: true } });
+  if (!c) throw notFound("Connection");
+  return syncConnection(userId, c.id, "manual");
+}
+
+/**
+ * Simulated (MOCK) connections have no bank sign-in to repeat: reconnecting re-links
+ * the same demo institution, which reactivates the connection and its accounts.
+ */
+export async function reconnectSimulatedConnection(userId: string, connectionId: string) {
+  const c = await prisma.providerConnection.findFirst({ where: { id: connectionId, userId }, select: { provider: true, institution: { select: { providerInstitutionId: true } } } });
+  if (!c) throw notFound("Connection");
+  if (c.provider !== "MOCK" || !c.institution) throw new AppError("BAD_REQUEST", "Reconnect this bank through its secure sign-in window.");
+  if (!isEnabled("ENABLE_BANKING")) throw new ProviderError("NOT_CONFIGURED", "Bank connections are turned off on this server.");
+  return completeConnection(userId, `mock-public:${c.institution.providerInstitutionId}`, undefined, { providerType: "MOCK" });
+}
+
 /**
  * Disconnects a provider connection: revokes the token at the provider, deletes the
  * stored token, and marks accounts disconnected. History is kept unless `deleteData`.
@@ -294,6 +315,7 @@ export async function disconnectConnection(userId: string, connectionId: string,
   if (deleteData) {
     await prisma.account.deleteMany({ where: { userId, connectionId } });
     await prisma.providerConnection.delete({ where: { id: connectionId } });
+    await recordNetWorthSnapshot(userId, await userToday(userId));
   } else {
     await prisma.$transaction([
       prisma.providerConnection.update({ where: { id: connectionId }, data: { status: "DISCONNECTED", encryptedAccessToken: null, syncCursor: null } }),
