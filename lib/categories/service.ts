@@ -39,11 +39,16 @@ function isUniqueViolation(error: unknown) {
   return (error as { code?: string } | null)?.code === "P2002";
 }
 
+function duplicateName(name: string | undefined): AppError {
+  const message = `You already have a category called “${name ?? ""}”.`;
+  return new AppError("CONFLICT", message, { fieldErrors: { name: [message] } });
+}
+
 export async function createCategory(userId: string, input: z.infer<typeof categoryInputSchema>) {
   const count = await prisma.category.count({ where: { userId } });
   if (count >= 200) throw new AppError("CONFLICT", "You can have up to 200 categories.");
   const cat = await prisma.category.create({ data: { userId, ...input, sortOrder: count } }).catch((error: unknown) => {
-    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `You already have a category called “${input.name}”.`);
+    if (isUniqueViolation(error)) throw duplicateName(input.name);
     throw error;
   });
   await audit(userId, "category.created", { type: "category", id: cat.id }, { name: cat.name });
@@ -56,7 +61,7 @@ export async function updateCategory(userId: string, id: string, input: Partial<
   // Built-in categories drive transfers, income and safe-to-spend, so their type is fixed.
   if (cat.systemKey && input.kind && input.kind !== cat.kind) throw new AppError("FORBIDDEN", "Built-in categories keep their type.");
   const updated = await prisma.category.update({ where: { id }, data: input }).catch((error: unknown) => {
-    if (isUniqueViolation(error)) throw new AppError("CONFLICT", `You already have a category called “${input.name}”.`);
+    if (isUniqueViolation(error)) throw duplicateName(input.name);
     throw error;
   });
   await audit(userId, "category.updated", { type: "category", id }, { fields: Object.keys(input) });

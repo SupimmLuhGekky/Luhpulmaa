@@ -34,10 +34,10 @@ export function PasswordForm({ isDemo, passwordChangedAt }: { isDemo: boolean; p
     setError(null);
     const res = await changePasswordAction(v);
     if (!res.ok) {
-      setError(res.error.message);
-      for (const [key, msgs] of Object.entries(res.error.fieldErrors ?? {})) {
-        if (key in v) form.setError(key as keyof Values, { message: msgs[0] });
-      }
+      const fieldErrors = Object.entries(res.error.fieldErrors ?? {}).filter(([key, msgs]) => key in v && msgs.length > 0);
+      for (const [key, msgs] of fieldErrors) form.setError(key as keyof Values, { message: msgs[0] }, { shouldFocus: true });
+      // The message under the field says it already; the banner is for anything else.
+      setError(fieldErrors.length ? null : res.error.message);
       return;
     }
     form.reset();

@@ -72,12 +72,16 @@ export function CategoryDialog({
     }
     setSaving(true);
     setError(null);
+    setNameError(undefined);
     const res = category
       ? await updateCategoryAction({ id: category.id, patch: { name: trimmed, icon, color, ...(category.systemKey ? {} : { kind }) } })
       : await createCategoryAction({ name: trimmed, kind, icon, color });
     setSaving(false);
     if (!res.ok) {
-      setError(res.error.message);
+      // A name problem (say, a duplicate) belongs under the name field.
+      const nameProblem = res.error.fieldErrors?.name?.[0];
+      if (nameProblem) setNameError(nameProblem);
+      else setError(res.error.message);
       return;
     }
     toast.success(category ? "Category updated" : `“${trimmed}” added`);
@@ -105,7 +109,16 @@ export function CategoryDialog({
               </div>
             </div>
             <Field label="Name" error={nameError} required>
-              <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus placeholder="e.g. Pets" />
+              <Input
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameError(undefined);
+                }}
+                maxLength={40}
+                autoFocus
+                placeholder="e.g. Pets"
+              />
             </Field>
             <div className="flex flex-col gap-1.5">
               <p className="text-[13px] font-medium leading-none text-foreground">Type</p>
