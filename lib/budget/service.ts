@@ -7,10 +7,11 @@ import { audit } from "@/lib/audit";
 import { addDays, addMonthKey, endOfWeek, fromDbDate, monthKey, monthRange, startOfWeek, toDbDate, type LocalDate, type MonthKey } from "@/lib/dates";
 import { calculateBudgetRemaining, calculateRollover, calculateZeroBased, resolveBudgetAmount } from "@/lib/finance/calculations";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
-import { spendingByCategory, spendingByCategoryPerMonth, totalIncome } from "@/lib/analytics/aggregates";
+import { spendingByCategory, spendingByCategoryPerMonth, totalIncome, totalSpending } from "@/lib/analytics/aggregates";
 import { runBudgetThresholdAutomations } from "@/lib/automation/engine";
 import { notify } from "@/lib/notifications/service";
 import { userPreferences } from "@/lib/settings/preferences";
+import { crossedThreshold } from "./thresholds";
 
 export const budgetItemInputSchema = z.object({
   categoryId: z.string().uuid().nullable(),
@@ -60,7 +61,11 @@ export async function createBudget(userId: string, input: z.infer<typeof createB
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { budgetMode: true, weekStartsOn: true, monthlyIncomeTargetCents: true } });
   const { start, end } = periodBounds(input.period, input.startDate, input.endDate, user.weekStartsOn);
   const name = input.name ?? (input.period === "MONTHLY" ? "Monthly budget" : input.period === "WEEKLY" ? "Weekly budget" : "Custom budget");
-  const existing = await prisma.budget.findFirst({ where: { userId, period: input.period, startDate: toDbDate(start), name } });
+  // One monthly or weekly budget per period; custom budgets are told apart by name.
+  const existing = await prisma.budget.findFirst({
+    where: { userId, period: input.period, startDate: toDbDate(start), ...(input.period === "CUSTOM" ? { name } : {}) },
+    orderBy: { createdAt: "asc" },
+  });
   if (existing) return existing;
 
   let source: (Budget & { items: BudgetItem[] }) | null = null;
@@ -95,6 +100,31 @@ export async function createBudget(userId: string, input: z.infer<typeof createB
   });
   await audit(userId, "budget.created", { type: "budget", id: budget.id }, { period: input.period, start, copied: Boolean(source) });
   return budget;
+}
+
+/** Like createBudget, but tells the caller whether the budget already existed (so the UI can say so). */
+export async function openOrCreateBudget(userId: string, input: z.infer<typeof createBudgetSchema>): Promise<{ budget: Budget; created: boolean }> {
+  if (input.period !== "CUSTOM") {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { weekStartsOn: true } });
+    const { start } = periodBounds(input.period, input.startDate, input.endDate, user.weekStartsOn);
+    const existing = await findBudget(userId, input.period, start);
+    if (existing) return { budget: existing, created: false };
+  }
+  return { budget: await createBudget(userId, input), created: true };
+}
+
+/** Settings the budget pages need to start a budget or a line the way the user prefers. */
+export async function budgetDefaults(userId: string) {
+  const [user, prefs] = await Promise.all([
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { budgetMode: true, weekStartsOn: true, monthlyIncomeTargetCents: true } }),
+    userPreferences(userId),
+  ]);
+  return {
+    mode: user.budgetMode,
+    weekStartsOn: user.weekStartsOn,
+    monthlyIncomeTargetCents: user.monthlyIncomeTargetCents === null ? null : toCents(user.monthlyIncomeTargetCents),
+    alertThresholds: prefs.budgetAlertThresholds,
+  };
 }
 
 /** Rollover carried into `month` for each category (chained up to 12 months back). */
@@ -163,7 +193,7 @@ export async function budgetView(userId: string, budgetId: string) {
     spendingByCategory(userId, start, end),
     totalIncome(userId, start, end),
     budget.period === "MONTHLY" ? computeRollovers(userId, monthKey(start), budget.items.filter((i) => i.rolloverEnabled && i.categoryId).map((i) => i.categoryId!)) : Promise.resolve(new Map<string, Cents>()),
-    prisma.category.findMany({ where: { userId, kind: "EXPENSE" }, select: { id: true, name: true, icon: true, color: true }, orderBy: { sortOrder: "asc" } }),
+    prisma.category.findMany({ where: { userId }, select: { id: true, name: true, icon: true, color: true, kind: true, isHidden: true }, orderBy: { sortOrder: "asc" } }),
   ]);
   const incomeBase = plannedIncome || actualIncome;
   const lines: BudgetLineView[] = budget.items.map((i) => {
@@ -190,9 +220,10 @@ export async function budgetView(userId: string, budgetId: string) {
       status: r.status,
     };
   });
-  const budgetedIds = new Set(budget.items.map((i) => i.categoryId));
+  // Label-only lines (no category) must not hide uncategorised spending.
+  const budgetedIds = new Set(budget.items.map((i) => i.categoryId).filter((id): id is string => Boolean(id)));
   const unbudgeted = [...spending.entries()]
-    .filter(([id, v]) => !budgetedIds.has(id) && v > 0)
+    .filter(([id, v]) => (id === null || !budgetedIds.has(id)) && v > 0)
     .map(([id, v]) => {
       const c = categories.find((x) => x.id === id);
       return { categoryId: id, name: c?.name ?? "Uncategorized", icon: c?.icon ?? "circle-dashed", color: c?.color ?? "#94a3b8", spent: v };
@@ -213,11 +244,49 @@ export async function budgetView(userId: string, budgetId: string) {
     totals: { ...totals, remaining },
     income: { planned: plannedIncome, actual: actualIncome, base: incomeBase },
     zeroBased,
-    availableCategories: categories.filter((c) => !budgetedIds.has(c.id)),
+    availableCategories: categories.filter((c) => c.kind === "EXPENSE" && !c.isHidden && !budgetedIds.has(c.id)).map((c) => ({ id: c.id, name: c.name, icon: c.icon, color: c.color })),
   };
 }
 
 export type BudgetView = Awaited<ReturnType<typeof budgetView>>;
+
+export interface BudgetHistoryPoint {
+  budgetId: string;
+  start: LocalDate;
+  end: LocalDate;
+  /** Sum of the category lines (allocation lines without a category, like savings, are left out). */
+  planned: Cents;
+  /** All spending in the period, budgeted or not. */
+  spent: Cents;
+}
+
+/** Planned vs actual spending for up to `count` monthly or weekly budgets ending with the one starting on `throughStart`. */
+export async function budgetHistory(userId: string, period: "MONTHLY" | "WEEKLY", throughStart: LocalDate, count = 6): Promise<BudgetHistoryPoint[]> {
+  const rows = await prisma.budget.findMany({
+    where: { userId, period, startDate: { lte: toDbDate(throughStart) } },
+    orderBy: [{ startDate: "desc" }, { createdAt: "asc" }],
+    take: count * 2,
+    include: { items: { where: { categoryId: { not: null } } } },
+  });
+  const seen = new Set<string>();
+  const budgets = rows.filter((b) => {
+    const key = fromDbDate(b.startDate);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, count).reverse();
+  return Promise.all(
+    budgets.map(async (b) => {
+      const start = fromDbDate(b.startDate);
+      const end = fromDbDate(b.endDate);
+      const needsIncome = b.plannedIncomeCents === null && b.items.some((i) => i.amountType === "PERCENT_OF_INCOME");
+      const [spent, actualIncome] = await Promise.all([totalSpending(userId, start, end), needsIncome ? totalIncome(userId, start, end) : Promise.resolve(0)]);
+      const incomeBase = toCents(b.plannedIncomeCents) || actualIncome;
+      const planned = b.items.reduce((a, i) => a + resolveBudgetAmount({ amountType: i.amountType, amountCents: toCents(i.amountCents), percentBps: i.percentBps }, incomeBase), 0);
+      return { budgetId: b.id, start, end, planned, spent: Math.max(0, spent) };
+    }),
+  );
+}
 
 async function ownBudget(userId: string, budgetId: string) {
   const b = await prisma.budget.findFirst({ where: { id: budgetId, userId } });
@@ -283,8 +352,7 @@ export async function checkBudgetAlerts(userId: string, today: LocalDate) {
     const usedPercent = Math.floor(line.usedBps / 100);
     // Thresholds below 100% fire when reached; 100% and above fire only when exceeded,
     // so a rent line that is exactly on budget doesn't raise an alarm.
-    const thresholds = (line.alertThresholds.length ? line.alertThresholds : prefs.budgetAlertThresholds).filter((t) => (t < 100 ? usedPercent >= t : line.usedBps > t * 100));
-    const crossed = thresholds.length ? Math.max(...thresholds) : null;
+    const crossed = crossedThreshold(line.usedBps, line.alertThresholds.length ? line.alertThresholds : prefs.budgetAlertThresholds);
     if (crossed !== null) {
       await notify(userId, {
         type: "BUDGET_WARNING",

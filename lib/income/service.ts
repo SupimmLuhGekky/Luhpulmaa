@@ -5,10 +5,13 @@ import { prisma } from "@/lib/db/prisma";
 import { notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
 import { fromDbDate, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
-import { nextOccurrence, occurrencesBetween } from "@/lib/dates/schedule";
 import { monthlyEquivalent, yearlyEquivalent } from "@/lib/finance/frequency";
-import { allocateByWeights, mulDiv, toCents, type Cents } from "@/lib/finance/money";
+import { toCents, type Cents } from "@/lib/finance/money";
 import { addContribution } from "@/lib/goals/service";
+import { previewAllocation } from "./allocation";
+import { nextPayday, paydaysBetween, type ExpectedPayday } from "./schedule";
+
+export { previewAllocation, type AllocationLine, type AllocationPreview } from "./allocation";
 
 export const PAY_FREQUENCIES = ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY"] as const;
 
@@ -32,13 +35,11 @@ export interface IncomeEstimate {
 
 /** Estimated income for one source (all values are estimates and labelled as such in the UI). */
 export function estimateIncome(source: { averageAmountCents: Cents; frequency: Frequency; nextExpectedDate: LocalDate | null; lastPaidDate: LocalDate | null; semiMonthlyDays: number[] }, today: LocalDate): IncomeEstimate {
-  const anchor = source.nextExpectedDate ?? source.lastPaidDate;
-  const next = anchor ? nextOccurrence(anchor < today && source.lastPaidDate ? source.lastPaidDate : anchor, source.frequency, today, { semiMonthlyDays: source.semiMonthlyDays }) : null;
   return {
     perPaycheck: source.averageAmountCents,
     monthly: monthlyEquivalent(source.averageAmountCents, source.frequency),
     yearly: yearlyEquivalent(source.averageAmountCents, source.frequency),
-    nextPayday: next,
+    nextPayday: nextPayday({ id: "", name: "", ...source }, today),
   };
 }
 
@@ -64,22 +65,24 @@ export async function listIncomeSources(userId: string, timeZone: string) {
 }
 
 /** All expected paydays in a window, across active sources (used by forecast and safe-to-spend). */
-export async function expectedPaydays(userId: string, from: LocalDate, to: LocalDate) {
+export async function expectedPaydays(userId: string, from: LocalDate, to: LocalDate): Promise<ExpectedPayday[]> {
   const rows = await prisma.incomeSource.findMany({ where: { userId, isActive: true } });
-  const out: { date: LocalDate; amount: Cents; name: string; sourceId: string }[] = [];
-  for (const r of rows) {
-    const anchor = fromDbDate(r.lastPaidDate) ?? fromDbDate(r.nextExpectedDate);
-    if (!anchor) continue;
-    for (const d of occurrencesBetween(anchor, r.frequency, from, to, { semiMonthlyDays: r.semiMonthlyDays })) {
-      if (d === fromDbDate(r.lastPaidDate)) continue;
-      out.push({ date: d, amount: toCents(r.averageAmountCents), name: r.name, sourceId: r.id });
-    }
-    const next = fromDbDate(r.nextExpectedDate);
-    if (next && next >= from && next <= to && !out.some((o) => o.sourceId === r.id && o.date === next)) {
-      out.push({ date: next, amount: toCents(r.averageAmountCents), name: r.name, sourceId: r.id });
-    }
-  }
-  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+  const out = rows.flatMap((r) =>
+    paydaysBetween(
+      {
+        id: r.id,
+        name: r.name,
+        frequency: r.frequency,
+        averageAmountCents: toCents(r.averageAmountCents),
+        lastPaidDate: fromDbDate(r.lastPaidDate),
+        nextExpectedDate: fromDbDate(r.nextExpectedDate),
+        semiMonthlyDays: r.semiMonthlyDays,
+      },
+      from,
+      to,
+    ),
+  );
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 export async function upsertIncomeSource(userId: string, id: string | null, input: z.infer<typeof incomeSourceSchema>) {
@@ -143,43 +146,6 @@ export const allocationPlanSchema = z.object({
     .max(20),
 });
 
-export interface AllocationLine {
-  label: string;
-  amount: Cents;
-  method: "PERCENT" | "FIXED";
-  percentBps: number | null;
-  goalId: string | null;
-  categoryId: string | null;
-}
-
-/**
- * Splits a paycheque: fixed amounts first, then percentages of the paycheque,
- * with percentages scaled down proportionally if fixed items leave too little.
- * Returns the lines and whatever is left unallocated.
- */
-export function previewAllocation(income: Cents, items: { label: string; method: "PERCENT" | "FIXED"; percentBps?: number | null; amountCents?: number | null; goalId?: string | null; categoryId?: string | null }[]) {
-  let remaining = income;
-  const lines: AllocationLine[] = items.map((i) => ({ label: i.label, amount: 0, method: i.method, percentBps: i.percentBps ?? null, goalId: i.goalId ?? null, categoryId: i.categoryId ?? null }));
-  items.forEach((i, idx) => {
-    if (i.method === "FIXED") {
-      const amt = Math.min(Math.max(0, i.amountCents ?? 0), Math.max(0, remaining));
-      lines[idx].amount = amt;
-      remaining -= amt;
-    }
-  });
-  const percentIdx = items.map((i, idx) => (i.method === "PERCENT" ? idx : -1)).filter((i) => i >= 0);
-  const wanted = percentIdx.map((idx) => mulDiv(income, items[idx].percentBps ?? 0, 10000));
-  const totalWanted = wanted.reduce((a, b) => a + b, 0);
-  const pool = Math.max(0, remaining);
-  const actual = totalWanted <= pool ? wanted : allocateByWeights(pool, wanted);
-  percentIdx.forEach((idx, k) => {
-    lines[idx].amount = actual[k];
-    remaining -= actual[k];
-  });
-  const totalPercentBps = items.filter((i) => i.method === "PERCENT").reduce((a, i) => a + (i.percentBps ?? 0), 0);
-  return { lines, unallocated: remaining, totalPercentBps, overAllocated: totalPercentBps > 10000 || remaining < 0 };
-}
-
 export async function listAllocationPlans(userId: string) {
   const plans = await prisma.allocationPlan.findMany({
     where: { userId },
@@ -222,8 +188,11 @@ export async function deleteAllocationPlan(userId: string, id: string) {
 }
 
 /**
- * Records the goal lines of a plan as PLANNED allocations for one paycheque.
- * Idempotent per (plan, paycheque date).
+ * Records the goal lines of a plan as PLANNED allocations for one paycheque. No money
+ * moves: these are earmarks the user can later match with real transfers.
+ * Idempotent per (plan, paycheque date, goal): applying the same plan to the same
+ * paycheque again — even after editing the plan — never earmarks a goal twice.
+ * Lines pointing at the same goal are combined; archived goals are skipped.
  */
 export async function applyAllocationPlan(userId: string, planId: string, incomeCents: Cents, date: LocalDate) {
   const plan = await prisma.allocationPlan.findFirst({ where: { id: planId, userId }, include: { items: { orderBy: { sortOrder: "asc" } } } });
@@ -232,18 +201,34 @@ export async function applyAllocationPlan(userId: string, planId: string, income
     incomeCents,
     plan.items.map((i) => ({ label: i.label, method: i.method, percentBps: i.percentBps, amountCents: i.amountCents === null ? null : toCents(i.amountCents), goalId: i.goalId, categoryId: i.categoryId })),
   );
-  let recorded = 0;
-  for (const [idx, line] of preview.lines.entries()) {
+  const perGoal = new Map<string, { amount: Cents; labels: string[] }>();
+  for (const line of preview.lines) {
     if (!line.goalId || line.amount <= 0) continue;
-    const c = await addContribution(userId, line.goalId, {
-      amountCents: line.amount,
+    const entry = perGoal.get(line.goalId) ?? { amount: 0, labels: [] };
+    entry.amount += line.amount;
+    entry.labels.push(line.label);
+    perGoal.set(line.goalId, entry);
+  }
+  const archived = new Set(
+    (await prisma.goal.findMany({ where: { userId, id: { in: [...perGoal.keys()] }, status: "ARCHIVED" }, select: { id: true } })).map((g) => g.id),
+  );
+  let recorded = 0;
+  let recordedCents = 0;
+  let alreadyApplied = 0;
+  for (const [goalId, entry] of perGoal) {
+    if (archived.has(goalId)) continue;
+    const c = await addContribution(userId, goalId, {
+      amountCents: entry.amount,
       date,
       kind: "PLANNED_ALLOCATION",
       source: "ALLOCATION_PLAN",
-      note: `${plan.name}: ${line.label}`,
-      idempotencyKey: `plan:${plan.id}:${date}:${plan.items[idx].id}`,
+      note: `${plan.name}: ${entry.labels.join(", ")}`.slice(0, 200),
+      idempotencyKey: `plan:${plan.id}:${date}:goal:${goalId}`,
     });
-    if (c) recorded++;
+    if (c) {
+      recorded++;
+      recordedCents += entry.amount;
+    } else alreadyApplied++;
   }
-  return { ...preview, recorded };
+  return { ...preview, recorded, recordedCents, alreadyApplied, skippedArchived: archived.size };
 }
