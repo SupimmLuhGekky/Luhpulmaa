@@ -31,6 +31,8 @@ const schema = z.object({
   RESEND_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   CRON_SECRET: z.string().optional(),
+  /** Set by the Mac desktop app, which runs this server and its database locally for one person. */
+  HARBOUR_DESKTOP: boolish,
   DEMO_MODE: boolish,
   ENABLE_BANKING: boolish,
   ENABLE_AUTOMATIONS: boolish,
@@ -59,4 +61,9 @@ export function env(): ServerEnv {
 
 export function isProduction(): boolean {
   return env().appEnv === "production";
+}
+
+/** True inside the Mac desktop app (local server and database, no email delivery). */
+export function isDesktop(): boolean {
+  return env().HARBOUR_DESKTOP === true;
 }

@@ -32,7 +32,14 @@ const securityHeaders = [
   ...(isProd ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" }] : []),
 ];
 
+/**
+ * The Mac desktop app bundles a self-contained server (`output: "standalone"`) that it
+ * starts on localhost. Web deployments (Vercel) don't need it.
+ */
+const isDesktopBuild = ["1", "true"].includes(process.env.HARBOUR_DESKTOP ?? "");
+
 const nextConfig: NextConfig = {
+  ...(isDesktopBuild ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   reactStrictMode: true,
   experimental: {
