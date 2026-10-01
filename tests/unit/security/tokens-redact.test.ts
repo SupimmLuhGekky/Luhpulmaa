@@ -70,6 +70,12 @@ describe("redact", () => {
     expect(out).toMatchObject({ email: "alex@example.com", amountCents: 1234, institution: "Fictional Credit Union" });
   });
 
+  it("redacts PINs, SINs and card codes under any spelling, but not words that contain them", () => {
+    const out = redact({ userPin: "1", PINCode: "2", pin_code: "3", sinNumber: "4", card_cvv: "5", SSN: "6", cvc: "7", businessName: "Fictional Inc", shippingAddress: "1 Fictional St", processingTime: 3, opinion: "fine", missing: false });
+    for (const key of ["userPin", "PINCode", "pin_code", "sinNumber", "card_cvv", "SSN", "cvc"]) expect(out[key as keyof typeof out], key).toBe("[REDACTED]");
+    expect(out).toMatchObject({ businessName: "Fictional Inc", shippingAddress: "1 Fictional St", processingTime: 3, opinion: "fine", missing: false });
+  });
+
   it("redacts nested objects and arrays", () => {
     const out = redact({ user: { id: "u1", credentials: { a: 1 } }, connections: [{ id: "c1", accessToken: FAKE.accessToken }, { id: "c2", items: [{ password: FAKE.password }] }] });
     expect(leaks(out)).toEqual([]);
