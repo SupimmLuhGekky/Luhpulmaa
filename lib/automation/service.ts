@@ -172,6 +172,8 @@ export async function listRuns(userId: string, opts: { automationId?: string; ta
     executedAt: r.executedAt.toISOString(),
     /** "txn:…", "month:2026-10", "week:…", "sub:…", "budget:…" — the event that triggered the run. */
     event: r.idempotencyKey.split(":")[0] ?? "event",
+    /** For scheduled runs, the period it ran for: "2026-10" (month) or the week's first day. */
+    period: /^(month|week):/.test(r.idempotencyKey) ? r.idempotencyKey.slice(r.idempotencyKey.indexOf(":") + 1) : null,
     automation: r.automation,
     transaction: r.transaction
       ? { id: r.transaction.id, label: r.transaction.merchantName ?? r.transaction.description, amountCents: toCents(r.transaction.amountCents), date: fromDbDate(r.transaction.date) }

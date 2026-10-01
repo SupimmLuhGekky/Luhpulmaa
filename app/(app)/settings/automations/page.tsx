@@ -25,7 +25,7 @@ export default async function AutomationSettingsPage() {
   const enabled = isEnabled("ENABLE_AUTOMATIONS");
   const [profile, automations] = await Promise.all([getProfile(user.id), enabled ? listAutomations(user.id) : Promise.resolve([])]);
   const active = automations.filter((a) => a.isActive).length;
-  const runs = automations.reduce((sum, a) => sum + a.runCount, 0);
+  const runs = automations.reduce((sum, a) => sum + a.executionCount, 0);
   const lastRun = automations.reduce<string | null>((latest, a) => (a.lastExecutedAt && (!latest || a.lastExecutedAt > latest) ? a.lastExecutedAt : latest), null);
 
   return (

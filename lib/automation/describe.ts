@@ -109,6 +109,7 @@ export function describeTrigger(trigger: Trigger, config: TriggerConfig, ctx: Pi
 /** "Merchant contains “Uber”", "Amount is more than $100.00", "Category is Groceries". */
 export function describeCondition(c: { field: ConditionField; operator: ConditionOperator; value: string }, ctx: DescribeContext): string {
   const op = OPERATOR_LABELS[c.operator];
+  if (!c.value.trim()) return `${FIELD_LABELS[c.field]} ${op} …`;
   switch (c.field) {
     case "AMOUNT":
       return /^\d+$/.test(c.value) ? `Amount ${op} ${ctx.money(Number(c.value))}` : `Amount ${op} …`;
