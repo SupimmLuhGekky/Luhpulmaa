@@ -126,6 +126,46 @@ function amountStability(amounts: number[]): number {
   return within / amounts.length;
 }
 
+/**
+ * Whether a series is treated as a subscription. Detection decides once, when the
+ * series is first seen; after that the stored flag wins, because the user may have
+ * marked it ("Mark as subscription") or unmarked it ("Not a subscription").
+ */
+export function keepSubscriptionChoice(existing: { isSubscription: boolean } | null | undefined, detected: boolean): boolean {
+  return existing ? existing.isSubscription : detected;
+}
+
+/** Fields a sync writes to an existing income source (dates as LocalDate). */
+export interface IncomeSourceSyncData {
+  lastPaidDate: LocalDate;
+  averageAmountCents?: number;
+  nextExpectedDate?: LocalDate;
+  accountId?: string;
+  frequency?: Frequency;
+  semiMonthlyDays?: number[];
+}
+
+/**
+ * What a sync may write to an existing income source. Once the user has edited a
+ * source on the income page (saving it clears `isDetected`), its amount, next payday,
+ * frequency and deposit account are theirs and are never replaced; detection only
+ * records when pay last arrived, which keeps the payday schedule and notifications
+ * current. Sources Harbour created and the user never edited follow the latest
+ * detection.
+ */
+export function incomeSourceSyncData(existing: { isDetected: boolean }, s: Pick<DetectedSeries, "lastDate" | "averageAmountCents" | "nextExpectedDate" | "accountId" | "frequency" | "semiMonthlyDays">): IncomeSourceSyncData {
+  const observed = { lastPaidDate: s.lastDate };
+  if (!existing.isDetected) return observed;
+  return {
+    ...observed,
+    averageAmountCents: s.averageAmountCents,
+    nextExpectedDate: s.nextExpectedDate,
+    accountId: s.accountId,
+    frequency: s.frequency,
+    ...(s.semiMonthlyDays ? { semiMonthlyDays: s.semiMonthlyDays } : {}),
+  };
+}
+
 export function detectRecurring(txns: RecurringInputTxn[], today: LocalDate, opts: { minConfidence?: number } = {}): DetectedSeries[] {
   const minConfidence = opts.minConfidence ?? 60;
   const groups = new Map<string, RecurringInputTxn[]>();

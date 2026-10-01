@@ -1,18 +1,20 @@
 import "server-only";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
-import { notFound } from "@/lib/api/errors";
+import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
 import { addDays, daysBetween, fromDbDate, toDbDate, type LocalDate } from "@/lib/dates";
 import { nextOccurrence } from "@/lib/dates/schedule";
 import { monthlyEquivalent, yearlyEquivalent } from "@/lib/finance/frequency";
 import { formatCurrency, toCents } from "@/lib/finance/money";
 import { notify } from "@/lib/notifications/service";
+import { detectPriceChange } from "./price";
+import { SUBSCRIPTION_FREQUENCIES } from "./upcoming";
 
 export const subscriptionInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   amountCents: z.number().int().positive().max(10_000_000),
-  frequency: z.enum(["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"]).default("MONTHLY"),
+  frequency: z.enum(SUBSCRIPTION_FREQUENCIES).default("MONTHLY"),
   nextChargeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   accountId: z.string().uuid().nullable().optional(),
@@ -27,6 +29,20 @@ export async function listSubscriptions(userId: string, today: LocalDate) {
     include: { category: { select: { id: true, name: true, icon: true, color: true } }, account: { select: { id: true, name: true } } },
     orderBy: [{ status: "asc" }, { nextChargeDate: "asc" }],
   });
+  // Recent charges of the linked recurring series, for the price-change hint.
+  const seriesIds = subs.map((s) => s.recurringId).filter((id): id is string => Boolean(id));
+  const charges = seriesIds.length
+    ? await prisma.transaction.findMany({
+        where: { userId, recurringId: { in: seriesIds }, amountCents: { lt: 0 }, isExcluded: false, date: { gte: toDbDate(addDays(today, -400)) } },
+        select: { recurringId: true, date: true, amountCents: true },
+      })
+    : [];
+  const chargesBySeries = new Map<string, { date: LocalDate; amountCents: number }[]>();
+  for (const c of charges) {
+    const list = chargesBySeries.get(c.recurringId!) ?? [];
+    list.push({ date: fromDbDate(c.date), amountCents: -toCents(c.amountCents) });
+    chargesBySeries.set(c.recurringId!, list);
+  }
   const rows = subs.map((s) => {
     const amount = toCents(s.amountCents);
     let next = fromDbDate(s.nextChargeDate);
@@ -41,6 +57,10 @@ export async function listSubscriptions(userId: string, today: LocalDate) {
       reminderDaysBefore: s.reminderDaysBefore,
       status: s.status,
       isDetected: s.isDetected,
+      /** The detected recurring series this subscription comes from (null when added by hand). */
+      recurringId: s.recurringId,
+      /** Set when the latest charge differs from the one before it (facts from transactions only). */
+      priceChange: s.recurringId ? detectPriceChange(chargesBySeries.get(s.recurringId) ?? []) : null,
       notes: s.notes,
       category: s.category,
       account: s.account,
@@ -95,6 +115,7 @@ export async function deleteSubscription(userId: string, id: string) {
 export async function subscriptionFromRecurring(userId: string, recurringId: string) {
   const rec = await prisma.recurringTransaction.findFirst({ where: { id: recurringId, userId } });
   if (!rec) throw notFound("Recurring series");
+  if (rec.direction !== "OUTFLOW") throw new AppError("BAD_REQUEST", "Only recurring charges (money out) can be subscriptions.");
   await prisma.recurringTransaction.update({ where: { id: rec.id }, data: { isSubscription: true, status: "CONFIRMED" } });
   const existing = await prisma.subscription.findFirst({ where: { userId, recurringId } });
   if (existing) return existing;
@@ -112,6 +133,23 @@ export async function subscriptionFromRecurring(userId: string, recurringId: str
       isDetected: true,
     },
   });
+}
+
+/**
+ * "Not a subscription": removes a subscription that came from a detected recurring
+ * series but keeps tracking the series as an ordinary recurring charge. Detection
+ * keeps this choice (see keepSubscriptionChoice in lib/recurring/detect).
+ */
+export async function unmarkSubscription(userId: string, id: string) {
+  const sub = await prisma.subscription.findFirst({ where: { id, userId } });
+  if (!sub) throw notFound("Subscription");
+  if (!sub.recurringId) throw new AppError("BAD_REQUEST", "This subscription was added by hand. Delete it instead.");
+  await prisma.$transaction([
+    prisma.subscription.delete({ where: { id } }),
+    prisma.recurringTransaction.updateMany({ where: { id: sub.recurringId, userId }, data: { isSubscription: false } }),
+  ]);
+  await audit(userId, "subscription.changed", { type: "subscription", id }, { unmarked: true });
+  return { recurringId: sub.recurringId };
 }
 
 export async function sendSubscriptionReminders(userId: string, today: LocalDate) {
