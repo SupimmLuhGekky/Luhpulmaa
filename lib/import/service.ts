@@ -96,3 +96,37 @@ export async function commitImport(userId: string, payload: Payload) {
   await audit(userId, "transaction.imported", { type: "import_batch", id: batch.id }, { imported: result.created.length, duplicates: duplicateCount, skipped: skippedCount, errors: errorCount });
   return { imported: result.created.length, duplicates: duplicateCount, skipped: skippedCount, errors: errorCount, batchId: batch.id };
 }
+
+/** Recent imports, newest first, for the import page's history list. */
+export async function listImportBatches(userId: string, take = 10) {
+  const rows = await prisma.importBatch.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take,
+    select: { id: true, fileName: true, rowCount: true, importedCount: true, duplicateCount: true, errorCount: true, createdAt: true, account: { select: { id: true, name: true } }, _count: { select: { transactions: true } } },
+  });
+  return rows.map((b) => ({
+    id: b.id,
+    fileName: b.fileName,
+    rowCount: b.rowCount,
+    importedCount: b.importedCount,
+    duplicateCount: b.duplicateCount,
+    errorCount: b.errorCount,
+    createdAt: b.createdAt.toISOString(),
+    account: b.account,
+    remaining: b._count.transactions,
+  }));
+}
+
+/** Removes every transaction a CSV import added (and the import record). Manual and bank-synced transactions are untouched. */
+export async function undoImport(userId: string, batchId: string) {
+  const batch = await prisma.importBatch.findFirst({ where: { id: batchId, userId }, select: { id: true } });
+  if (!batch) throw notFound("Import");
+  const [removed] = await prisma.$transaction([
+    prisma.transaction.deleteMany({ where: { userId, importBatchId: batch.id } }),
+    prisma.importBatch.delete({ where: { id: batch.id } }),
+  ]);
+  await detectAndPersistRecurring(userId);
+  await audit(userId, "transaction.import_undone", { type: "import_batch", id: batch.id }, { removed: removed.count });
+  return { removed: removed.count };
+}

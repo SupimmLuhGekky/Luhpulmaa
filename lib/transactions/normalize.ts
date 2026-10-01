@@ -44,9 +44,15 @@ export function normalizeText(raw: string | null | undefined): string {
 }
 
 /** Title-cases a normalised key for display when no better merchant name exists. */
+/** Names that read as acronyms (Quebec and Canadian merchants, transit, agencies). */
+const ACRONYMS = new Set(["saq", "saaq", "sqdc", "stm", "rtc", "stl", "exo", "iga", "bmr", "rbc", "td", "bmo", "cibc", "bnc", "caa", "kfc", "lcbo", "via", "ikea", "cra", "arc", "rrq", "ramq", "hq"]);
+
 export function displayMerchant(raw: string): string {
   const key = normalizeMerchant(raw) || raw.trim().toLowerCase();
-  return key.replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\bMc([a-z])/g, (_m, c: string) => `Mc${c.toUpperCase()}`);
+  return key
+    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
+    .replace(/\bMc([a-z])/g, (_m, c: string) => `Mc${c.toUpperCase()}`)
+    .replace(/\b[A-Za-z]+\b/g, (w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w));
 }
 
 /** Levenshtein distance (iterative, O(n·m) with two rows). */

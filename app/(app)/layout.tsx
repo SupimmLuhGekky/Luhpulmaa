@@ -1,4 +1,5 @@
 import { requireOnboardedUser } from "@/lib/auth/guard";
+import { COMPLIANCE_NOTICE } from "@/lib/banking-core";
 import { todayIn } from "@/lib/dates";
 import { flags } from "@/lib/flags";
 import { unreadCount } from "@/lib/notifications/service";
@@ -24,7 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {children}
           </main>
           <footer className="mx-auto w-full max-w-7xl px-4 pb-28 pt-2 text-xs text-muted-foreground sm:px-6 md:pb-8 lg:px-8">
-            <p>This application provides financial organization and budgeting tools. It is not a bank and does not itself hold customer deposits.</p>
+            <p>{COMPLIANCE_NOTICE}</p>
           </footer>
         </div>
         <BottomNav flags={shellFlags} />
