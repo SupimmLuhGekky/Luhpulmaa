@@ -50,6 +50,7 @@ delete process.env.PLAID_CLIENT_ID;
 delete process.env.PLAID_SECRET;
 delete process.env.FLINKS_SECRET;
 delete process.env.MOCK_TODAY;
+delete process.env.HARBOUR_DESKTOP;
 
 vi.mock("next/headers", () => import("./helpers/next-headers"));
 

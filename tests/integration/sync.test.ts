@@ -14,15 +14,24 @@ import { balanceOf, categoryId, createUser, freezeTime } from "./helpers/factory
 let userId: string;
 let connectionId: string;
 
+/** What the simulated bank reports for a window, keyed "<provider account>|<provider transaction id>". */
 async function providerTransactions(connId: string, startDate: string, endDate: string) {
   const c = await prisma.providerConnection.findUniqueOrThrow({ where: { id: connId } });
   const page = await getProvider("MOCK").getTransactions(decryptSecret(c.encryptedAccessToken!), { startDate, endDate });
-  return page.added;
+  return page.added.map((t) => ({ ...t, key: `${t.providerAccountId}|${t.providerTransactionId}` }));
 }
 
+/** Stored transactions of a connection with the same key (provider ids are unique per account). */
 async function connectionTransactions(connId: string) {
-  return prisma.transaction.findMany({ where: { userId, account: { connectionId: connId } }, orderBy: [{ date: "asc" }, { providerTransactionId: "asc" }] });
+  const rows = await prisma.transaction.findMany({
+    where: { userId, account: { connectionId: connId } },
+    include: { account: { select: { providerAccountId: true } } },
+    orderBy: [{ date: "asc" }, { providerTransactionId: "asc" }],
+  });
+  return rows.map((t) => ({ ...t, key: `${t.account.providerAccountId}|${t.providerTransactionId}` }));
 }
+
+const keys = (rows: { key: string }[]) => rows.map((r) => r.key).sort();
 
 beforeAll(async () => {
   freezeTime("2026-10-01T16:00:00Z");
@@ -50,9 +59,9 @@ describe("connecting a bank", () => {
     // Exactly what the bank reports for the initial 180-day window, with today's and yesterday's still pending.
     const expected = await providerTransactions(connectionId, "2026-04-04", "2026-10-01");
     const stored = await connectionTransactions(connectionId);
-    expect(stored).toHaveLength(expected.length);
+    expect(keys(stored)).toEqual(keys(expected));
     expect(res.sync.added).toBe(expected.length);
-    expect(stored.filter((t) => t.isPending).map((t) => t.providerTransactionId).sort()).toEqual(expected.filter((t) => t.pending).map((t) => t.providerTransactionId).sort());
+    expect(keys(stored.filter((t) => t.isPending))).toEqual(keys(expected.filter((t) => t.pending)));
     expect(stored.filter((t) => t.isPending).every((t) => t.providerTransactionId!.startsWith("pd_") && t.date.toISOString() >= "2026-09-30")).toBe(true);
     expect(stored.filter((t) => t.categoryId).length / stored.length).toBeGreaterThan(0.8);
 
@@ -80,11 +89,11 @@ describe("connecting a bank", () => {
     expect(outcome.status).toBe("SUCCESS");
     expect(outcome.modified).toBe(pending.length);
 
+    // Every transaction the bank reports, once each: nothing duplicated, nothing left pending that has posted.
     const expected = await providerTransactions(connectionId, "2026-04-04", "2026-10-04");
     const stored = await connectionTransactions(connectionId);
-    expect(stored).toHaveLength(expected.length);
-    expect(new Set(stored.map((t) => t.providerTransactionId)).size).toBe(stored.length);
-    expect(stored.filter((t) => t.isPending).map((t) => t.providerTransactionId).sort()).toEqual(expected.filter((t) => t.pending).map((t) => t.providerTransactionId).sort());
+    expect(keys(stored)).toEqual(keys(expected));
+    expect(keys(stored.filter((t) => t.isPending))).toEqual(keys(expected.filter((t) => t.pending)));
 
     const after = await prisma.transaction.findUniqueOrThrow({ where: { id: edited.id } });
     expect(after).toMatchObject({ isPending: false, categoryId: await categoryId(userId, "entertainment"), notes: "fictional note", categorizedBy: "USER" });
@@ -121,13 +130,12 @@ describe("disconnecting and reconnecting", () => {
     expect(await prisma.account.count({ where: { connectionId, status: "ACTIVE" } })).toBe(res.accounts);
 
     const after = await bankRows();
-    expect(new Set(after.map((t) => t.providerTransactionId)).size).toBe(after.length);
     // The last sync was on Oct 4, so the bank is re-read from Sep 24: older history is untouched…
     const olderIds = (rows: typeof after) => rows.filter((t) => t.date < new Date("2026-09-24")).map((t) => t.id);
     expect(olderIds(after)).toEqual(olderIds(before));
     // …and the re-read window holds exactly what the bank reports for it, once each.
     const window = await providerTransactions(connectionId, "2026-09-24", "2026-10-06");
-    expect(after.filter((t) => t.date >= new Date("2026-09-24")).map((t) => t.providerTransactionId).sort()).toEqual(window.map((t) => t.providerTransactionId).sort());
+    expect(keys(after.filter((t) => t.date >= new Date("2026-09-24")))).toEqual(keys(window));
   });
 });
 
