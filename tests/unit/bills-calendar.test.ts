@@ -83,4 +83,10 @@ describe("parseCalendarParams", () => {
     expect(parseCalendarParams({ view: "year", date: "2026-02-30" }, "2026-09-30")).toEqual({ view: "month", date: "2026-09-30" });
     expect(parseCalendarParams({ view: ["list"], date: undefined }, "2026-09-30")).toEqual({ view: "month", date: "2026-09-30" });
   });
+
+  it("ignores dates too far from today", () => {
+    expect(parseCalendarParams({ view: "month", date: "0001-01-01" }, "2026-09-30").date).toBe("2026-09-30");
+    expect(parseCalendarParams({ view: "month", date: "2099-01-01" }, "2026-09-30").date).toBe("2026-09-30");
+    expect(parseCalendarParams({ view: "month", date: "2036-09-30" }, "2026-09-30").date).toBe("2036-09-30");
+  });
 });

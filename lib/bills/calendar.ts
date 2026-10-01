@@ -1,7 +1,7 @@
 /**
  * Bill calendar helpers (pure: used by the /bills page on the server and client).
  */
-import { addDays, addMonths, endOfMonth, isLocalDate, startOfMonth, startOfWeek, type LocalDate } from "@/lib/dates";
+import { addDays, addMonths, addYears, endOfMonth, isLocalDate, startOfMonth, startOfWeek, type LocalDate } from "@/lib/dates";
 
 export const CALENDAR_VIEWS = ["month", "week", "list"] as const;
 export type CalendarView = (typeof CALENDAR_VIEWS)[number];
@@ -56,12 +56,19 @@ export function shiftDate(view: CalendarView, date: LocalDate, delta: number): L
   return view === "week" ? addDays(date, 7 * delta) : addMonths(startOfMonth(date), delta);
 }
 
-/** Reads `?view=` and `?date=` defensively. */
+/** How far from today the calendar can be moved (in years, either way). */
+export const CALENDAR_YEARS = 10;
+
+/** Reads `?view=` and `?date=` defensively (dates more than 10 years away fall back to today). */
 export function parseCalendarParams(params: { view?: string | string[]; date?: string | string[] }, today: LocalDate): { view: CalendarView; date: LocalDate } {
   const view = typeof params.view === "string" && (CALENDAR_VIEWS as readonly string[]).includes(params.view) ? (params.view as CalendarView) : "month";
-  const date = typeof params.date === "string" && isLocalDate(params.date) ? params.date : today;
+  const inWindow = (d: string) => d >= addYears(today, -CALENDAR_YEARS) && d <= addYears(today, CALENDAR_YEARS);
+  const date = typeof params.date === "string" && isLocalDate(params.date) && inWindow(params.date) ? params.date : today;
   return { view, date };
 }
+
+/** How far back unpaid occurrences count as "overdue" in summaries. */
+export const OVERDUE_LOOKBACK_DAYS = 60;
 
 /**
  * Window for "money needed before payday": from today up to the day before the next

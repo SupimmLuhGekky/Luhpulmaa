@@ -8,7 +8,9 @@ import { nextOccurrence, occurrencesBetween } from "@/lib/dates/schedule";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
 import { expectedPaydays } from "@/lib/income/service";
 import { notify } from "@/lib/notifications/service";
-import { paydayWindow } from "./calendar";
+import { OVERDUE_LOOKBACK_DAYS, paydayWindow } from "./calendar";
+
+export { OVERDUE_LOOKBACK_DAYS };
 
 export const BILL_FREQUENCIES = ["ONE_TIME", "WEEKLY", "BIWEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"] as const;
 
@@ -97,9 +99,6 @@ export async function listBills(userId: string, today?: LocalDate) {
   }));
 }
 
-/** How far back unpaid occurrences count as "overdue" in summaries. */
-export const OVERDUE_LOOKBACK_DAYS = 60;
-
 /**
  * Money the user's bills need before the next expected payday: unpaid bill
  * occurrences from today until the day before that payday (the same window
@@ -160,7 +159,8 @@ export async function createBill(userId: string, input: z.infer<typeof billInput
       categoryId: input.categoryId ?? null,
       accountId: input.accountId ?? null,
       autopay: input.autopay,
-      reminderDaysBefore: input.reminderDaysBefore ?? 3,
+      // null means "no reminder"; only an omitted value gets the 3-day default.
+      reminderDaysBefore: input.reminderDaysBefore === undefined ? 3 : input.reminderDaysBefore,
       notes: input.notes ?? null,
     },
   });
