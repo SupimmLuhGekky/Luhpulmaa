@@ -38,7 +38,7 @@ export function UnbudgetedCard({ items, total, spentInLines, range, onBudget }: 
                 </Button>
               ) : (
                 <Button variant="ghost" size="sm" className="-mr-2 shrink-0" asChild>
-                  <Link href={`/transactions?categoryId=uncategorized&from=${range.start}&to=${range.end}`} aria-label="Review uncategorized transactions">
+                  <Link href={`/transactions?category=uncategorized&from=${range.start}&to=${range.end}`} aria-label="Review uncategorized transactions">
                     <Search /> Review
                   </Link>
                 </Button>

@@ -18,7 +18,7 @@ const steps = [
     body: "Track cash, a chequing account or a loan by entering the balance yourself.",
   },
   {
-    href: "/accounts/new",
+    href: "/accounts/new?method=connect",
     icon: Landmark,
     title: "Connect a bank",
     body: "Link an institution through a secure provider when one is set up. Harbour never sees or stores your bank password.",

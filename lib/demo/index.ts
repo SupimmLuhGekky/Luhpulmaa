@@ -203,6 +203,13 @@ async function createDemoUser() {
     }
   }
 
+  // The demo's history starts months ago, so a goal shouldn't look newer than its first contribution.
+  const goals = await prisma.goal.findMany({ where: { userId }, select: { id: true, createdAt: true, contributions: { orderBy: { date: "asc" }, take: 1, select: { date: true } } } });
+  for (const g of goals) {
+    const first = g.contributions[0]?.date;
+    if (first && first < g.createdAt) await prisma.goal.update({ where: { id: g.id }, data: { createdAt: first } });
+  }
+
   // Phone and internet are tracked as subscriptions too (linked to the same series as their bills).
   const series = await prisma.recurringTransaction.findMany({ where: { userId, direction: "OUTFLOW", name: { in: ["Fizz", "Vidéotron"] } }, select: { id: true } });
   for (const s of series) await subscriptionFromRecurring(userId, s.id);

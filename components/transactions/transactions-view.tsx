@@ -61,6 +61,8 @@ export function TransactionsView(props: TransactionsViewProps) {
   const [bulkCategory, setBulkCategory] = React.useState("");
   const [bulkSaving, setBulkSaving] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(props.openId);
+  // A new ?txn= from a link (search, notifications) while already on this page.
+  React.useEffect(() => setOpenId(props.openId), [props.openId]);
 
   // Selection only makes sense for the rows on screen.
   React.useEffect(() => setSelected(new Set()), [rows]);

@@ -21,7 +21,7 @@ export async function notifyLargeTransactions(userId: string, transactionIds: st
       severity: "INFO",
       title: `Large transaction: ${formatCurrency(-toCents(t.amountCents))}`,
       body: `${t.merchantName || t.description} on ${fromDbDate(t.date)}.`,
-      href: `/transactions?id=${t.id}`,
+      href: `/transactions?txn=${t.id}`,
       dedupeKey: `large:${t.id}`,
     });
   }

@@ -32,7 +32,7 @@ export function AreaChart({ label, data, xKey, series, height = 240, formatX, re
     <ChartShell
       label={label}
       height={height}
-      table={{ columns: [xKey, ...series.map((s) => s.label)], rows: data.map((d) => [fx(String(d[xKey])), ...series.map((s) => f.money(Number(d[s.key] ?? 0)))]) }}
+      table={{ columns: [xKey.charAt(0).toUpperCase() + xKey.slice(1), ...series.map((s) => s.label)], rows: data.map((d) => [fx(String(d[xKey])), ...series.map((s) => f.money(Number(d[s.key] ?? 0)))]) }}
     >
       <ResponsiveContainer width="100%" height="100%">
         <RAreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -44,7 +44,7 @@ export function AreaChart({ label, data, xKey, series, height = 240, formatX, re
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.7} />
           <XAxis dataKey={xKey} tickFormatter={(v) => fx(String(v))} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} minTickGap={24} />
           <YAxis
             width={64}

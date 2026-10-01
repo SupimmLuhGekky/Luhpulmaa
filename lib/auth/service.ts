@@ -3,6 +3,7 @@ import type { VerificationTokenType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { AppError } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
+import { isDesktop } from "@/lib/config/env";
 import { appUrl, sendEmail } from "@/lib/email";
 import { provisionDefaultCategories } from "@/lib/categories/provision";
 import { provisionNotificationPreferences } from "@/lib/notifications/preferences";
@@ -72,7 +73,8 @@ export async function signUp(input: { firstName: string; lastName: string; email
   });
   await createSession(user.id);
   await audit(user.id, "auth.sign_up", { type: "user", id: user.id });
-  await sendVerificationEmail(user.id, user.email, user.firstName);
+  // The Mac app has no email delivery; its account exists only on that Mac.
+  if (!isDesktop()) await sendVerificationEmail(user.id, user.email, user.firstName);
   return { userId: user.id };
 }
 
@@ -111,8 +113,12 @@ export async function signIn(input: { email: string; password: string }) {
   return { userId: user.id, onboarded: Boolean(user.onboardingCompletedAt) };
 }
 
-/** Always resolves the same way whether or not the email exists (no account enumeration). */
+/**
+ * Always resolves the same way whether or not the email exists (no account enumeration).
+ * The Mac app can't send email: there, the app menu creates the reset link instead.
+ */
 export async function requestPasswordReset(email: string) {
+  if (isDesktop()) return;
   const meta = await requestMeta();
   await limitOrThrow(`reset:ip:${meta.ipAddress ?? "unknown"}`, RATE_LIMITS.passwordReset);
   await limitOrThrow(`reset:email:${email}`, RATE_LIMITS.passwordReset);
