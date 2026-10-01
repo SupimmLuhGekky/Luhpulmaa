@@ -1,5 +1,5 @@
 import "server-only";
-import type { Automation, AutomationAction, AutomationCondition, Prisma } from "@prisma/client";
+import type { Automation, AutomationAction, AutomationCondition, CategoryKind, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { isEnabled } from "@/lib/flags";
 import { fromDbDate, startOfWeek, type LocalDate } from "@/lib/dates";
@@ -57,6 +57,17 @@ async function goalLabel(userId: string, goalId: string): Promise<string> {
   return goal?.name ?? "a goal";
 }
 
+/**
+ * Type and transfer flag that follow from a category, exactly as when the person changes the
+ * category by hand: a transfer category makes it a transfer; any other category takes it out
+ * of transfers (so a payment the keywords filed as a transfer counts as spending again).
+ */
+function kindForCategory(kind: CategoryKind, amountCents: number): { isTransfer: boolean; type: TxnForAutomation["type"] } {
+  if (kind === "TRANSFER") return { isTransfer: true, type: "TRANSFER" };
+  if (kind === "INCOME") return { isTransfer: false, type: amountCents > 0 ? "INCOME" : "EXPENSE" };
+  return { isTransfer: false, type: amountCents > 0 ? "REFUND" : "EXPENSE" };
+}
+
 type TxnForAutomation = Prisma.TransactionGetPayload<{ select: { id: true; userId: true; accountId: true; merchantName: true; description: true; amountCents: true; categoryId: true; type: true; date: true; isTransfer: true } }>;
 
 async function applyTransactionAction(userId: string, automation: FullAutomation, action: AutomationAction, txn: TxnForAutomation): Promise<string | null> {
@@ -68,6 +79,7 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
       const cat = await prisma.category.findFirst({ where: { id: cfg.categoryId, userId }, include: { subcategories: { select: { id: true } } } });
       if (!cat) return null;
       const subOk = cfg.subcategoryId && cat.subcategories.some((s) => s.id === cfg.subcategoryId);
+      const kind = kindForCategory(cat.kind, amount);
       await prisma.transaction.update({
         where: { id: txn.id },
         data: {
@@ -76,14 +88,12 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
           categorizedBy: "AUTOMATION",
           categorizedByRuleId: automation.id,
           categorizedByLabel: `Automation: ${automation.name}`,
-          ...(cat.kind === "TRANSFER" ? { isTransfer: true, type: "TRANSFER" } : {}),
+          ...kind,
         },
       });
       txn.categoryId = cat.id;
-      if (cat.kind === "TRANSFER") {
-        txn.isTransfer = true;
-        txn.type = "TRANSFER";
-      }
+      txn.isTransfer = kind.isTransfer;
+      txn.type = kind.type;
       return `category → ${cat.name}`;
     }
     case "ADD_TAG": {
