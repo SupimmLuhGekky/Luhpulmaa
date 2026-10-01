@@ -3,9 +3,9 @@ import type { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
-import { fromDbDate, toDbDate } from "@/lib/dates";
+import { addDays, fromDbDate, toDbDate } from "@/lib/dates";
 import { toCents } from "@/lib/finance/money";
-import { findDuplicate, type DedupeExisting } from "@/lib/transactions/dedupe";
+import { findDuplicate, FUZZY_DATE_WINDOW_DAYS, type DedupeExisting } from "@/lib/transactions/dedupe";
 import { ingestTransactions } from "@/lib/transactions/ingest";
 import { detectAndPersistRecurring } from "@/lib/recurring/service";
 import { matchTransfers } from "@/lib/transactions/transfers";
@@ -23,8 +23,11 @@ async function prepare(userId: string, payload: Payload) {
   const dates = valid.map((r) => r.date!).sort();
   let existing: DedupeExisting[] = [];
   if (dates.length) {
+    // Look a few days past both ends: a row on the file's first day can duplicate one from the day before.
+    const from = addDays(dates[0], -FUZZY_DATE_WINDOW_DAYS);
+    const to = addDays(dates[dates.length - 1], FUZZY_DATE_WINDOW_DAYS);
     const found = await prisma.transaction.findMany({
-      where: { userId, accountId: account.id, date: { gte: toDbDate(dates[0]), lte: toDbDate(dates[dates.length - 1]) } },
+      where: { userId, accountId: account.id, date: { gte: toDbDate(from), lte: toDbDate(to) } },
       select: { id: true, accountId: true, providerTransactionId: true, date: true, amountCents: true, description: true, merchantName: true, isPending: true, fingerprint: true },
     });
     existing = found.map((e) => ({ ...e, date: fromDbDate(e.date), amountCents: toCents(e.amountCents) }));
@@ -40,7 +43,7 @@ async function prepare(userId: string, payload: Payload) {
     }
     return { ...r, status: "new" as const };
   });
-  return { account, preview };
+  return { account, preview, claimed };
 }
 
 export async function previewImport(userId: string, payload: Payload) {
@@ -59,7 +62,7 @@ export async function previewImport(userId: string, payload: Payload) {
 
 /** Validate → normalise → deduplicate → import → categorise (+ automations, transfers, recurring). */
 export async function commitImport(userId: string, payload: Payload) {
-  const { account, preview } = await prepare(userId, payload);
+  const { account, preview, claimed } = await prepare(userId, payload);
   const categories = await prisma.category.findMany({ where: { userId }, select: { id: true, name: true, systemKey: true } });
   const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c]));
   // The file's category column: a match to one of the user's own custom categories is
@@ -82,7 +85,9 @@ export async function commitImport(userId: string, payload: Payload) {
       merchantName: r.merchantName,
       ...categoryFor(r.categoryName),
     })),
-    { importBatchId: batch.id, notify: false },
+    // Existing rows the preview already matched to other lines of this file can't absorb the new ones
+    // (a file with three identical coffees against two already imported adds exactly one).
+    { importBatchId: batch.id, notify: false, claimedIds: claimed },
   );
   const errorCount = preview.filter((r) => r.status === "error").length;
   const skippedCount = preview.filter((r) => r.status === "skipped").length;

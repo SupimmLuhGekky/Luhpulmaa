@@ -15,7 +15,8 @@ import { afterAll, beforeAll, vi } from "vitest";
 
 const DEFAULT_TEST_DATABASE_URL = "postgresql://budget:budget@localhost:5432/budget_test?schema=public";
 
-const databaseUrl = process.env.DATABASE_URL || DEFAULT_TEST_DATABASE_URL;
+// TEST_DATABASE_URL wins over DATABASE_URL so a shell pointed at the dev database can still run the suite.
+const databaseUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || DEFAULT_TEST_DATABASE_URL;
 const databaseName = (() => {
   try {
     return decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, ""));

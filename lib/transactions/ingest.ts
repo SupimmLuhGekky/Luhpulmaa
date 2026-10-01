@@ -43,7 +43,15 @@ export interface IngestResult {
   duplicates: number;
 }
 
-export async function ingestTransactions(userId: string, rows: IngestRow[], opts: { importBatchId?: string; runAutomations?: boolean; notify?: boolean } = {}): Promise<IngestResult> {
+export interface IngestOptions {
+  importBatchId?: string;
+  runAutomations?: boolean;
+  notify?: boolean;
+  /** Existing transaction ids already matched to other rows of the same file, which must not absorb these rows. */
+  claimedIds?: Iterable<string>;
+}
+
+export async function ingestTransactions(userId: string, rows: IngestRow[], opts: IngestOptions = {}): Promise<IngestResult> {
   const result: IngestResult = { created: [], updated: [], duplicates: 0 };
   if (!rows.length) return result;
 
@@ -81,7 +89,7 @@ export async function ingestTransactions(userId: string, rows: IngestRow[], opts
 
   const ctx = await loadCategorizationContext(userId);
   const merchantCache = new Map<string, string>();
-  const claimed = new Set<string>();
+  const claimed = new Set<string>(opts.claimedIds ?? []);
 
   async function merchantIdFor(name: string, defaultCategoryId: string | null): Promise<string | null> {
     const key = normalizeMerchant(name);
