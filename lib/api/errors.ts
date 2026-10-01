@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { ProviderError, type ProviderErrorCode } from "@/lib/banking/types";
 
 export type ErrorCode =
   | "BAD_REQUEST"
@@ -53,6 +54,17 @@ export function notFound(what = "Resource"): AppError {
   return new AppError("NOT_FOUND", `${what} not found.`);
 }
 
+/** Bank-provider errors carry messages written for the user ("Your bank needs you to sign in again…"). */
+const PROVIDER_CODES: Record<ProviderErrorCode, ErrorCode> = {
+  NOT_CONFIGURED: "FEATURE_DISABLED",
+  LOGIN_REQUIRED: "PROVIDER_ERROR",
+  INSTITUTION_UNAVAILABLE: "PROVIDER_UNAVAILABLE",
+  PROVIDER_UNAVAILABLE: "PROVIDER_UNAVAILABLE",
+  RATE_LIMITED: "RATE_LIMITED",
+  INVALID_REQUEST: "BAD_REQUEST",
+  UNKNOWN: "PROVIDER_ERROR",
+};
+
 export interface SafeError {
   code: ErrorCode;
   message: string;
@@ -65,6 +77,10 @@ export interface SafeError {
 export function toSafeError(error: unknown): SafeError {
   if (error instanceof AppError) {
     return { code: error.code, message: error.message, status: error.status, fieldErrors: error.fieldErrors, retryAfterSeconds: error.retryAfterSeconds };
+  }
+  if (error instanceof ProviderError) {
+    const code = PROVIDER_CODES[error.code] ?? "PROVIDER_ERROR";
+    return { code, message: error.message, status: STATUS[code] };
   }
   if (error instanceof ZodError) {
     const flat = error.flatten();
