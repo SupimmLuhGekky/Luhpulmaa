@@ -10,6 +10,7 @@ import { listSubscriptions } from "@/lib/subscriptions/service";
 import { listBills } from "@/lib/bills/service";
 import { audit } from "@/lib/audit";
 import { toCsv } from "./csv";
+import { exportFileName, type ExportType } from "./files";
 import { createZip } from "./zip";
 
 export const exportQuerySchema = z.object({
@@ -161,4 +162,45 @@ export async function fullExportZip(userId: string) {
     { name: "bills.csv", content: billsCsv },
     { name: "summary.csv", content: summary },
   ]);
+}
+
+export interface ExportFile {
+  filename: string;
+  contentType: string;
+  body: string | Uint8Array<ArrayBuffer>;
+}
+
+/** Builds one download for the signed-in user and records it in the audit log. */
+export async function exportFile(userId: string, type: ExportType, q: z.infer<typeof exportQuerySchema>): Promise<ExportFile> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true } });
+  const today = todayIn(user.timeZone);
+  const filename = exportFileName(type, today, { month: q.month, from: q.from, to: q.to });
+  const csv = "text/csv; charset=utf-8";
+  if (type === "all") {
+    // fullExportZip records its own audit entry.
+    return { filename, contentType: "application/zip", body: await fullExportZip(userId) };
+  }
+  let body: string;
+  switch (type) {
+    case "transactions":
+      body = await transactionsCsv(userId, q);
+      break;
+    case "budget":
+      body = await budgetCsv(userId, q.month ?? monthKey(today));
+      break;
+    case "goals":
+      body = (await goalsCsv(userId, user.timeZone)).goalsCsvText;
+      break;
+    case "contributions":
+      body = (await goalsCsv(userId, user.timeZone)).contributionsCsv;
+      break;
+    case "summary":
+      body = await summaryCsv(userId);
+      break;
+    case "accounts":
+      body = await accountsCsv(userId);
+      break;
+  }
+  await audit(userId, "data.exported", { type: "export" }, { kind: type, ...(q.month ? { month: q.month } : {}), ...(q.from || q.to ? { from: q.from ?? null, to: q.to ?? null } : {}) });
+  return { filename, contentType: csv, body };
 }

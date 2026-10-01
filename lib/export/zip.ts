@@ -18,7 +18,7 @@ export function crc32(data: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-export function createZip(files: { name: string; content: string }[], date = new Date()): Uint8Array {
+export function createZip(files: { name: string; content: string }[], date = new Date()): Uint8Array<ArrayBuffer> {
   const enc = new TextEncoder();
   const dosTime = ((date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)) & 0xffff;
   const dosDate = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;

@@ -19,6 +19,7 @@ import { listSubscriptions } from "@/lib/subscriptions/service";
 import { listTransactions } from "@/lib/transactions/service";
 import { transactionFiltersSchema } from "@/lib/transactions/schemas";
 import { AI_MODEL, aiClient } from "./client";
+import { conversationFor } from "./history";
 
 /**
  * Optional financial assistant (ENABLE_AI_ASSISTANT + ANTHROPIC_API_KEY + user opt-in).
@@ -328,6 +329,32 @@ function localeFor(locale: string) {
   return locale.startsWith("fr") ? "fr-CA" : "en-CA";
 }
 
+/** Human-readable names for the read-only tools, shown under each answer. */
+export const ASSISTANT_TOOL_LABELS: Record<string, string> = {
+  get_financial_overview: "Net worth & safe-to-spend",
+  get_spending_by_category: "Spending by category",
+  search_transactions: "Transaction search",
+  get_budget_status: "This month's budget",
+  get_goals: "Savings goals",
+  get_upcoming_bills: "Upcoming bills",
+  get_subscriptions: "Subscriptions",
+  get_cash_flow_forecast: "Cash-flow forecast",
+};
+
+export interface AssistantStatus {
+  /** ENABLE_AI_ASSISTANT is on for this server. */
+  enabled: boolean;
+  /** An API key is configured. */
+  configured: boolean;
+  /** The user turned on AI features in Settings → Data & privacy. */
+  optedIn: boolean;
+}
+
+export async function assistantStatus(userId: string): Promise<AssistantStatus> {
+  const prefs = await userPreferences(userId);
+  return { enabled: isEnabled("ENABLE_AI_ASSISTANT"), configured: Boolean(aiClient()), optedIn: prefs.aiOptIn };
+}
+
 /**
  * Answers a question with a manual tool-use loop. Returns the explanation text plus
  * facts computed by our own code from whatever data the model looked up.
@@ -341,10 +368,7 @@ export async function askAssistant(userId: string, input: z.infer<typeof assista
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timeZone: true, currency: true, locale: true } });
   const ctx: ToolContext = { userId, today: todayIn(user.timeZone), currency: user.currency, locale: localeFor(user.locale) };
-  const messages: Anthropic.Messages.MessageParam[] = [
-    ...input.history.map((m) => ({ role: m.role, content: m.content })),
-    { role: "user", content: input.question },
-  ];
+  const messages: Anthropic.Messages.MessageParam[] = conversationFor(input.history, input.question).map((m) => ({ role: m.role, content: m.content }));
   const facts: AssistantFact[] = [];
   const toolsUsed: string[] = [];
   const system = `${SYSTEM_PROMPT}\n\nToday is ${formatDate(ctx.today, "long", ctx.locale)} (${ctx.today}). Currency: ${ctx.currency}.`;
@@ -353,7 +377,8 @@ export async function askAssistant(userId: string, input: z.infer<typeof assista
     for (let step = 0; step < 6; step++) {
       const response = await client.messages.create({
         model: AI_MODEL,
-        max_tokens: 4096,
+        // Adaptive thinking shares this budget with the answer; keep room so replies aren't cut off.
+        max_tokens: 16000,
         system,
         tools: TOOLS,
         thinking: { type: "adaptive" },

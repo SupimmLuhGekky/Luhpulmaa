@@ -1,8 +1,10 @@
 import "server-only";
 import type { NotificationSeverity, NotificationType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { AppError } from "@/lib/api/errors";
 import { isEnabled } from "@/lib/flags";
-import { CHANNELS } from "./channels";
+import { CHANNELS, channelAvailability, type ChannelName } from "./channels";
+import { ALWAYS_IN_APP, defaultChannels, NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPES } from "./preferences";
 
 export interface NotifyInput {
   type: NotificationType;
@@ -22,34 +24,34 @@ export interface NotifyInput {
 export async function notify(userId: string, input: NotifyInput) {
   if (!isEnabled("ENABLE_NOTIFICATIONS")) return null;
   const pref = await prisma.notificationPreference.findUnique({ where: { userId_type: { userId, type: input.type } } });
-  const inApp = pref?.inApp ?? true;
-  if (!inApp && !pref?.email) return null;
+  const inApp = ALWAYS_IN_APP.includes(input.type) || (pref?.inApp ?? true);
+  const emailOn = Boolean(pref?.email) && channelAvailability().email.available;
+  if (!inApp && !emailOn) return null;
 
   if (input.dedupeKey) {
     const exists = await prisma.notification.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: input.dedupeKey } }, select: { id: true } });
     if (exists) return null;
   }
-  let notification;
-  try {
-    notification = await prisma.notification.create({
-      data: {
+  // ON CONFLICT DO NOTHING: a concurrent notify with the same dedupe key wins without an error.
+  const [notification] = await prisma.notification.createManyAndReturn({
+    data: [
+      {
         userId,
         type: input.type,
         severity: input.severity ?? "INFO",
         title: input.title,
         body: input.body,
-        href: input.href,
-        dedupeKey: input.dedupeKey,
+        href: input.href ?? null,
+        dedupeKey: input.dedupeKey ?? null,
         metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
         // Email-only preference: keep the record for history but mark it read.
         readAt: inApp ? null : new Date(),
       },
-    });
-  } catch (error) {
-    if ((error as { code?: string }).code === "P2002") return null; // concurrent dedupe
-    throw error;
-  }
-  if (pref?.email && CHANNELS.email) {
+    ],
+    skipDuplicates: true,
+  });
+  if (!notification) return null;
+  if (emailOn && CHANNELS.email) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, isDemo: true } });
     if (user && !user.isDemo) await CHANNELS.email.deliver(notification, user);
   }
@@ -72,6 +74,12 @@ export async function unreadCount(userId: string) {
   return prisma.notification.count({ where: { userId, readAt: null } });
 }
 
+/** Total and unread counts for the notification centre header. */
+export async function notificationCounts(userId: string) {
+  const [total, unread] = await Promise.all([prisma.notification.count({ where: { userId } }), unreadCount(userId)]);
+  return { total, unread };
+}
+
 export async function markRead(userId: string, ids: string[], read = true) {
   await prisma.notification.updateMany({ where: { userId, id: { in: ids } }, data: { readAt: read ? new Date() : null } });
 }
@@ -84,14 +92,54 @@ export async function deleteNotifications(userId: string, ids: string[]) {
   await prisma.notification.deleteMany({ where: { userId, id: { in: ids } } });
 }
 
+const CHANNEL_UNAVAILABLE: Record<ChannelName, string> = {
+  inApp: "In-app notifications aren't available on this server.",
+  email: "Email isn't available on this server.",
+  push: "Push notifications aren't available on this server.",
+  sms: "Text messages aren't available on this server.",
+};
+
+/**
+ * Updates one notification type's channels. Channels this server can't deliver can
+ * only be switched off, never on.
+ */
 export async function updatePreference(
   userId: string,
   type: NotificationType,
   channels: Partial<{ inApp: boolean; email: boolean; push: boolean; sms: boolean }>,
 ) {
+  if (channels.inApp === false && ALWAYS_IN_APP.includes(type)) throw new AppError("BAD_REQUEST", "Account and security messages always appear in Harbour.");
+  const availability = channelAvailability();
+  for (const [name, on] of Object.entries(channels) as [ChannelName, boolean | undefined][]) {
+    if (on && !availability[name].available) throw new AppError("BAD_REQUEST", CHANNEL_UNAVAILABLE[name]);
+  }
   await prisma.notificationPreference.upsert({
     where: { userId_type: { userId, type } },
     update: channels,
-    create: { userId, type, inApp: true, ...channels },
+    create: { userId, type, ...defaultChannels(type), ...channels },
+  });
+}
+
+export interface NotificationPreferenceRow {
+  type: NotificationType;
+  label: string;
+  description: string;
+  /** In-app delivery can't be turned off for this type. */
+  inAppLocked: boolean;
+  inApp: boolean;
+  email: boolean;
+  push: boolean;
+  sms: boolean;
+}
+
+/** Every notification type with its channels (defaults for types without a stored row). */
+export async function listPreferences(userId: string): Promise<NotificationPreferenceRow[]> {
+  const rows = await prisma.notificationPreference.findMany({ where: { userId } });
+  const byType = new Map(rows.map((r) => [r.type, r]));
+  return NOTIFICATION_TYPES.map((type) => {
+    const row = byType.get(type);
+    const channels = row ? { inApp: row.inApp, email: row.email, push: row.push, sms: row.sms } : defaultChannels(type);
+    const inAppLocked = ALWAYS_IN_APP.includes(type);
+    return { type, ...NOTIFICATION_TYPE_LABELS[type], ...channels, inApp: inAppLocked || channels.inApp, inAppLocked };
   });
 }

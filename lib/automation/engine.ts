@@ -1,5 +1,5 @@
 import "server-only";
-import type { Automation, AutomationAction, AutomationCondition, Prisma } from "@prisma/client";
+import type { Automation, AutomationAction, AutomationCondition, CategoryKind, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { isEnabled } from "@/lib/flags";
 import { fromDbDate, startOfWeek, type LocalDate } from "@/lib/dates";
@@ -30,15 +30,18 @@ async function loadAutomations(userId: string, triggers: Automation["trigger"][]
   });
 }
 
-/** Claims the (automation, event) pair. Returns false if it already ran. */
+/**
+ * Claims the (automation, event) pair: returns the new run's id, or null when it already ran.
+ * `INSERT … ON CONFLICT DO NOTHING` (skipDuplicates), so jobs that run several times a day
+ * don't raise — and log — a unique-constraint error for every run that already happened.
+ */
 async function claimRun(userId: string, automationId: string, idempotencyKey: string, transactionId?: string): Promise<string | null> {
-  try {
-    const run = await prisma.automationRun.create({ data: { userId, automationId, idempotencyKey, transactionId, status: "SKIPPED" } });
-    return run.id;
-  } catch (error) {
-    if ((error as { code?: string }).code === "P2002") return null;
-    throw error;
-  }
+  const [run] = await prisma.automationRun.createManyAndReturn({
+    data: [{ userId, automationId, idempotencyKey, transactionId: transactionId ?? null, status: "SKIPPED" }],
+    select: { id: true },
+    skipDuplicates: true,
+  });
+  return run?.id ?? null;
 }
 
 async function finishRun(runId: string, automationId: string, status: "SUCCESS" | "FAILED" | "SKIPPED", summary: string) {
@@ -46,6 +49,23 @@ async function finishRun(runId: string, automationId: string, status: "SUCCESS" 
   if (status === "SUCCESS") {
     await prisma.automation.update({ where: { id: automationId }, data: { lastExecutedAt: new Date(), executionCount: { increment: 1 } } });
   }
+}
+
+/** Goal name for run summaries ("planned $50 for Car Fund"). */
+async function goalLabel(userId: string, goalId: string): Promise<string> {
+  const goal = await prisma.goal.findFirst({ where: { id: goalId, userId }, select: { name: true } });
+  return goal?.name ?? "a goal";
+}
+
+/**
+ * Type and transfer flag that follow from a category, exactly as when the person changes the
+ * category by hand: a transfer category makes it a transfer; any other category takes it out
+ * of transfers (so a payment the keywords filed as a transfer counts as spending again).
+ */
+function kindForCategory(kind: CategoryKind, amountCents: number): { isTransfer: boolean; type: TxnForAutomation["type"] } {
+  if (kind === "TRANSFER") return { isTransfer: true, type: "TRANSFER" };
+  if (kind === "INCOME") return { isTransfer: false, type: amountCents > 0 ? "INCOME" : "EXPENSE" };
+  return { isTransfer: false, type: amountCents > 0 ? "REFUND" : "EXPENSE" };
 }
 
 type TxnForAutomation = Prisma.TransactionGetPayload<{ select: { id: true; userId: true; accountId: true; merchantName: true; description: true; amountCents: true; categoryId: true; type: true; date: true; isTransfer: true } }>;
@@ -59,6 +79,7 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
       const cat = await prisma.category.findFirst({ where: { id: cfg.categoryId, userId }, include: { subcategories: { select: { id: true } } } });
       if (!cat) return null;
       const subOk = cfg.subcategoryId && cat.subcategories.some((s) => s.id === cfg.subcategoryId);
+      const kind = kindForCategory(cat.kind, amount);
       await prisma.transaction.update({
         where: { id: txn.id },
         data: {
@@ -67,10 +88,12 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
           categorizedBy: "AUTOMATION",
           categorizedByRuleId: automation.id,
           categorizedByLabel: `Automation: ${automation.name}`,
-          ...(cat.kind === "TRANSFER" ? { isTransfer: true, type: "TRANSFER" } : {}),
+          ...kind,
         },
       });
       txn.categoryId = cat.id;
+      txn.isTransfer = kind.isTransfer;
+      txn.type = kind.type;
       return `category → ${cat.name}`;
     }
     case "ADD_TAG": {
@@ -81,6 +104,9 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
     }
     case "MARK_TRANSFER":
       await prisma.transaction.update({ where: { id: txn.id }, data: { isTransfer: true, type: "TRANSFER" } });
+      // Later actions and automations in the same run (e.g. a round-up) must see it as a transfer too.
+      txn.isTransfer = true;
+      txn.type = "TRANSFER";
       return "marked as transfer";
     case "MARK_RECURRING":
       await prisma.transaction.update({ where: { id: txn.id }, data: { isRecurring: true } });
@@ -110,7 +136,7 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
         note: `Planned from ${txn.merchantName || txn.description}`,
         idempotencyKey: `automation:${automation.id}:txn:${txn.id}:${action.id}`,
       }).catch(() => null);
-      return c ? `planned ${formatCurrency(alloc)} to goal` : null;
+      return c ? `planned ${formatCurrency(alloc)} for ${await goalLabel(userId, cfg.goalId)}` : null;
     }
     case "ROUND_UP_TO_GOAL": {
       const cfg = actionConfigSchemas.ROUND_UP_TO_GOAL.parse(action.config);
@@ -127,7 +153,7 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
         note: `Round-up of ${txn.merchantName || txn.description}`,
         idempotencyKey: `automation:${automation.id}:txn:${txn.id}:${action.id}`,
       }).catch(() => null);
-      return c ? `round-up ${formatCurrency(up)}` : null;
+      return c ? `round-up of ${formatCurrency(up)} planned for ${await goalLabel(userId, cfg.goalId)}` : null;
     }
     case "NOTIFY": {
       const cfg = actionConfigSchemas.NOTIFY.parse(action.config);
@@ -147,9 +173,10 @@ async function applyTransactionAction(userId: string, automation: FullAutomation
  * Runs TRANSACTION_CREATED (and INCOME_RECEIVED for income) automations on newly
  * imported/created transactions. Safe to call repeatedly with the same ids.
  */
-export async function runTransactionAutomations(userId: string, transactionIds: string[]) {
+export async function runTransactionAutomations(userId: string, transactionIds: string[], opts: { onlyAutomationId?: string } = {}) {
   if (!transactionIds.length) return { executed: 0 };
-  const automations = await loadAutomations(userId, ["TRANSACTION_CREATED", "INCOME_RECEIVED"]);
+  // `onlyAutomationId` limits a run to one automation ("apply this one to recent transactions").
+  const automations = (await loadAutomations(userId, ["TRANSACTION_CREATED", "INCOME_RECEIVED"])).filter((a) => !opts.onlyAutomationId || a.id === opts.onlyAutomationId);
   if (!automations.length) return { executed: 0 };
   const txns = await prisma.transaction.findMany({
     where: { userId, id: { in: transactionIds } },
@@ -214,7 +241,7 @@ export async function runScheduledAutomations(userId: string, today: LocalDate) 
             note: `Scheduled: ${a.name}`,
             idempotencyKey: `automation:${a.id}:${key}:${action.id}`,
           }).catch(() => null);
-          if (r) done.push(`planned ${formatCurrency(c.amountCents)} to goal`);
+          if (r) done.push(`planned ${formatCurrency(c.amountCents)} for ${await goalLabel(userId, c.goalId)}`);
         } else if (action.type === "NOTIFY") {
           const c = actionConfigSchemas.NOTIFY.parse(action.config);
           await notify(userId, { type: "AUTOMATION", title: c.title, body: c.message ?? a.name, dedupeKey: `automation:${a.id}:${key}` });

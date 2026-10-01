@@ -8,7 +8,8 @@ import { isValidTimeZone } from "@/lib/dates";
 import { verifyPassword } from "@/lib/auth/password";
 import { destroyCurrentSession } from "@/lib/auth/session";
 import { disconnectConnection } from "@/lib/accounts/service";
-import { parsePreferences, preferencesSchema } from "@/lib/settings/preferences";
+import { parsePreferences, preferencesPatchSchema, preferencesSchema, type PreferencesPatch } from "@/lib/settings/preferences";
+import { describeUserAgent, coarseIp } from "./devices";
 
 export const CANADIAN_PROVINCES = [
   { code: "QC", name: "Québec" },
@@ -60,6 +61,7 @@ export async function getProfile(userId: string) {
     preferences: parsePreferences(u.preferences),
     isDemo: u.isDemo,
     createdAt: u.createdAt.toISOString(),
+    passwordChangedAt: u.passwordChangedAt?.toISOString() ?? null,
   };
 }
 
@@ -73,7 +75,8 @@ export async function updateProfile(userId: string, input: Partial<z.infer<typeo
   await audit(userId, "settings.updated", { type: "user", id: userId }, { fields: Object.keys(input) });
 }
 
-export async function updatePreferences(userId: string, patch: Partial<z.infer<typeof preferencesSchema>>) {
+export async function updatePreferences(userId: string, rawPatch: PreferencesPatch) {
+  const patch = preferencesPatchSchema.parse(rawPatch);
   const current = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { preferences: true } });
   const next = preferencesSchema.parse({ ...parsePreferences(current.preferences), ...patch });
   await prisma.user.update({ where: { id: userId }, data: { preferences: next as Prisma.InputJsonValue } });
@@ -98,6 +101,56 @@ export async function deleteAccount(userId: string, password: string) {
   ]);
   await destroyCurrentSession();
 }
+
+/**
+ * Disconnects every active bank connection: provider tokens are revoked and deleted,
+ * accounts are marked disconnected, and their history is kept.
+ */
+export async function disconnectAllConnections(userId: string) {
+  const connections = await prisma.providerConnection.findMany({ where: { userId, status: { not: "DISCONNECTED" } }, select: { id: true } });
+  for (const c of connections) await disconnectConnection(userId, c.id, false);
+  return { disconnected: connections.length };
+}
+
+/** Audit actions shown as "recent security activity". */
+export const SECURITY_ACTIONS = [
+  "auth.sign_up",
+  "auth.sign_in",
+  "auth.sign_in_failed",
+  "auth.sign_out",
+  "auth.password_reset_requested",
+  "auth.password_reset",
+  "auth.password_changed",
+  "auth.email_verified",
+  "auth.session_revoked",
+  "account.connected",
+  "account.disconnected",
+  "data.exported",
+] as const;
+
+/** Recent sign-ins and other sensitive events, with coarse device and network info only. */
+export async function listSecurityActivity(userId: string, take = 20) {
+  const rows = await prisma.auditLog.findMany({
+    where: { userId, action: { in: [...SECURITY_ACTIONS] } },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(take, 100),
+    select: { id: true, action: true, createdAt: true, ipAddress: true, userAgent: true, metadata: true },
+  });
+  return rows.map((r) => {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>;
+    return {
+      id: r.id,
+      action: r.action,
+      createdAt: r.createdAt.toISOString(),
+      device: describeUserAgent(r.userAgent).label,
+      network: coarseIp(r.ipAddress),
+      // Only non-sensitive, display-friendly details are passed on.
+      detail: typeof meta.kind === "string" ? meta.kind : typeof meta.institution === "string" ? meta.institution : typeof meta.failedAttempts === "number" ? `${meta.failedAttempts} failed attempt(s)` : null,
+    };
+  });
+}
+
+export type SecurityEvent = Awaited<ReturnType<typeof listSecurityActivity>>[number];
 
 export async function listAuditLog(userId: string, take = 50) {
   const rows = await prisma.auditLog.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take });
