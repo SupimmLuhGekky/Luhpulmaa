@@ -1,13 +1,14 @@
 import "server-only";
-import type { ContributionKind, ContributionSource, Priority, Prisma } from "@prisma/client";
+import type { AccountType, ContributionKind, ContributionSource, Priority, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, notFound } from "@/lib/api/errors";
 import { audit } from "@/lib/audit";
-import { addDays, fromDbDate, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
-import { calculateGoalPace, calculateGoalProgress } from "@/lib/finance/calculations";
+import { addDays, dateInZone, fromDbDate, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
+import { calculateGoalPace, calculateGoalProgress, type GoalPace, type GoalProgress } from "@/lib/finance/calculations";
 import { formatCurrency, toCents, type Cents } from "@/lib/finance/money";
 import { notify } from "@/lib/notifications/service";
+import { growthSeries, totalsByKind, type GrowthPoint, type KindTotals } from "./contributions";
 
 export const goalInputSchema = z.object({
   name: z.string().trim().min(1, "Required").max(60),
@@ -102,6 +103,16 @@ export async function updateGoal(userId: string, goalId: string, input: z.infer<
   if (input.status !== undefined) {
     data.status = input.status;
     data.completedAt = input.status === "COMPLETED" ? new Date() : null;
+  } else if (input.targetCents !== undefined) {
+    // A new target can complete an active goal or reopen a completed one.
+    const reached = existing.currentCents >= BigInt(input.targetCents);
+    if (existing.status === "ACTIVE" && reached) {
+      data.status = "COMPLETED";
+      data.completedAt = new Date();
+    } else if (existing.status === "COMPLETED" && !reached) {
+      data.status = "ACTIVE";
+      data.completedAt = null;
+    }
   }
   const goal = await prisma.goal.update({ where: { id: goalId }, data });
   await audit(userId, "goal.updated", { type: "goal", id: goalId }, { fields: Object.keys(input) });
@@ -138,6 +149,19 @@ export async function addContribution(
       if (dup) return null;
     }
     const before = toCents(goal.currentCents);
+    if (input.amountCents < 0 && before + input.amountCents < 0) {
+      throw new AppError("VALIDATION_FAILED", `You can't take out more than the ${formatCurrency(before)} set aside for this goal.`);
+    }
+    if (input.amountCents < 0) {
+      // Planned and actual are tracked apart, so a withdrawal can't push either one below zero.
+      const planned = input.kind === "PLANNED_ALLOCATION";
+      const kinds: ContributionKind[] = planned ? ["PLANNED_ALLOCATION"] : ["USER_REPORTED_TRANSFER", "PROVIDER_TRANSFER"];
+      const sum = await tx.goalContribution.aggregate({ where: { goalId, kind: { in: kinds } }, _sum: { amountCents: true } });
+      const available = toCents(sum._sum.amountCents);
+      if (available + input.amountCents < 0) {
+        throw new AppError("VALIDATION_FAILED", planned ? `Only ${formatCurrency(Math.max(0, available))} is planned for this goal, so you can't take out more.` : `Only ${formatCurrency(Math.max(0, available))} was actually moved to this goal, so you can't take out more.`);
+      }
+    }
     const contribution = await tx.goalContribution.create({
       data: {
         userId,
@@ -157,6 +181,8 @@ export async function addContribution(
     const target = toCents(goal.targetCents);
     if (after >= target && goal.status === "ACTIVE") {
       await tx.goal.update({ where: { id: goalId }, data: { status: "COMPLETED", completedAt: new Date() } });
+    } else if (after < target && goal.status === "COMPLETED") {
+      await tx.goal.update({ where: { id: goalId }, data: { status: "ACTIVE", completedAt: null } });
     }
     return { contribution, goal, before, after, target };
   });
@@ -204,6 +230,7 @@ export async function goalSummary(userId: string, goalId: string, timeZone: stri
     source: c.source,
     note: c.note,
     automation: c.automation,
+    transactionId: c.transactionId,
   }));
   const pace = calculateGoalPace(progress, contributions, today);
   let running = 0;
@@ -212,6 +239,119 @@ export async function goalSummary(userId: string, goalId: string, timeZone: stri
     return { date: c.date, total: running };
   });
   return { goal, progress, pace, contributions, growth, today };
+}
+
+export interface GoalListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  color: string;
+  priority: Priority;
+  status: "ACTIVE" | "COMPLETED" | "ARCHIVED";
+  deadline: LocalDate | null;
+  createdOn: LocalDate;
+  completedOn: LocalDate | null;
+  linkedAccount: { id: string; name: string } | null;
+  /** Planned allocations vs actual transfers (their sum is the goal's current amount). */
+  totals: KindTotals;
+  progress: GoalProgress;
+  pace: GoalPace;
+  lastContributionDate: LocalDate | null;
+  contributionCount: number;
+}
+
+export interface GoalContributionItem {
+  id: string;
+  date: LocalDate;
+  amount: Cents;
+  kind: ContributionKind;
+  source: ContributionSource;
+  note: string | null;
+  automation: { id: string; name: string } | null;
+  transactionId: string | null;
+}
+
+export interface GoalDetail extends GoalListItem {
+  contributions: GoalContributionItem[];
+  growth: GrowthPoint[];
+  today: LocalDate;
+}
+
+type GoalRow = Awaited<ReturnType<typeof listGoals>>[number];
+
+function toListItem(g: GoalRow, timeZone: string, today: LocalDate, stats: { totals: KindTotals; recent: { date: LocalDate; amount: Cents }[]; last: LocalDate | null; count: number }): GoalListItem {
+  const progress = calculateGoalProgress(toCents(g.targetCents), toCents(g.currentCents), fromDbDate(g.deadline), today);
+  return {
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    icon: g.icon,
+    color: g.color,
+    priority: g.priority,
+    status: g.status,
+    deadline: fromDbDate(g.deadline),
+    createdOn: dateInZone(g.createdAt, timeZone),
+    completedOn: g.completedAt ? dateInZone(g.completedAt, timeZone) : null,
+    linkedAccount: g.linkedAccount,
+    totals: stats.totals,
+    progress,
+    pace: calculateGoalPace(progress, stats.recent, today),
+    lastContributionDate: stats.last,
+    contributionCount: stats.count,
+  };
+}
+
+/** Every goal (archived included) with progress, pace and the planned/actual split — plain data for pages and the API. */
+export async function listGoalItems(userId: string, timeZone: string): Promise<GoalListItem[]> {
+  const today = todayIn(timeZone);
+  const [goals, byKind, recent] = await Promise.all([
+    listGoals(userId, { includeArchived: true }),
+    prisma.goalContribution.groupBy({ by: ["goalId", "kind"], where: { userId }, _sum: { amountCents: true }, _max: { date: true }, _count: { _all: true } }),
+    prisma.goalContribution.findMany({ where: { userId, date: { gt: toDbDate(addDays(today, -90)), lte: toDbDate(today) } }, select: { goalId: true, date: true, amountCents: true } }),
+  ]);
+  return goals.map((g) => {
+    const rows = byKind.filter((r) => r.goalId === g.id);
+    const totals = totalsByKind(rows.map((r) => ({ kind: r.kind, amount: toCents(r._sum.amountCents) })));
+    const last = rows.map((r) => fromDbDate(r._max.date)).filter((d): d is LocalDate => Boolean(d)).sort().at(-1) ?? null;
+    const count = rows.reduce((a, r) => a + r._count._all, 0);
+    const mine = recent.filter((c) => c.goalId === g.id).map((c) => ({ date: fromDbDate(c.date), amount: toCents(c.amountCents) }));
+    return toListItem(g, timeZone, today, { totals, recent: mine, last, count });
+  });
+}
+
+/** One goal with its contribution history and growth series (planned and actual kept apart). */
+export async function goalDetail(userId: string, goalId: string, timeZone: string): Promise<GoalDetail> {
+  const { goal, contributions, today } = await goalSummary(userId, goalId, timeZone);
+  const createdOn = dateInZone(goal.createdAt, timeZone);
+  const item = toListItem(goal, timeZone, today, {
+    totals: totalsByKind(contributions),
+    recent: contributions,
+    last: contributions.at(-1)?.date ?? null,
+    count: contributions.length,
+  });
+  return {
+    ...item,
+    contributions,
+    growth: growthSeries(contributions, { startAt: createdOn, extendTo: today }),
+    today,
+  };
+}
+
+export interface GoalAccountOption {
+  id: string;
+  name: string;
+  type: AccountType;
+  mask: string | null;
+}
+
+/** Accounts a goal can point at (where its money is kept): open, visible asset accounts. */
+export async function goalAccountOptions(userId: string): Promise<GoalAccountOption[]> {
+  return prisma.account.findMany({
+    where: { userId, status: { not: "CLOSED" }, isHidden: false, type: { in: ["SAVINGS", "CHEQUING", "CASH", "INVESTMENT", "OTHER_ASSET"] } },
+    orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    select: { id: true, name: true, type: true, mask: true },
+  });
 }
 
 export async function checkGoalDeadlines(userId: string, today: LocalDate) {
