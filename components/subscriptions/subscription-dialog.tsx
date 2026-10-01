@@ -14,7 +14,6 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Field, FormError } from "@/components/shared/field";
 import { useFormat } from "@/components/providers/format-provider";
-import { FieldControl } from "@/components/bills/field-control";
 import { REMINDER_OPTIONS, reminderValue } from "@/components/bills/status";
 import { FREQUENCY_LABELS } from "@/lib/dates/schedule";
 import { SUBSCRIPTION_FREQUENCIES } from "@/lib/subscriptions/upcoming";
@@ -126,24 +125,18 @@ function SubscriptionForm({ subscription: sub, options, onCancel, onSaved }: { s
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Price" error={errors.amountCents?.message} required>
-            <FieldControl>
-              {(p) => (
-                <Controller
-                  control={form.control}
-                  name="amountCents"
-                  render={({ field }) => <CurrencyInput {...p} value={field.value} onChange={(c) => field.onChange(c ?? undefined)} onBlur={field.onBlur} currency={fmt.currency} locale={fmt.locale} placeholder="0.00" />}
-                />
-              )}
-            </FieldControl>
+            <Controller
+              control={form.control}
+              name="amountCents"
+              render={({ field }) => <CurrencyInput value={field.value} onChange={(c) => field.onChange(c ?? undefined)} onBlur={field.onBlur} currency={fmt.currency} locale={fmt.locale} placeholder="0.00" />}
+            />
           </Field>
           <Field label="Charged" error={errors.frequency?.message} required>
             <Select {...form.register("frequency")} options={frequencyOptions} />
           </Field>
         </div>
         <Field label="Next charge" hint="Leave empty if you're not sure. Later charges repeat from this date.">
-          <FieldControl>
-            {(p) => <Controller control={form.control} name="nextChargeDate" render={({ field }) => <DatePicker {...p} value={field.value || null} onChange={(d) => field.onChange(d ?? "")} locale={fmt.locale} clearable />} />}
-          </FieldControl>
+          <Controller control={form.control} name="nextChargeDate" render={({ field }) => <DatePicker value={field.value || null} onChange={(d) => field.onChange(d ?? "")} locale={fmt.locale} clearable />} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Category">

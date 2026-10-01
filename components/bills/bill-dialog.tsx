@@ -17,7 +17,6 @@ import { Field, FormError } from "@/components/shared/field";
 import { useFormat } from "@/components/providers/format-provider";
 import { FREQUENCY_LABELS } from "@/lib/dates/schedule";
 import { createBillAction, updateBillAction } from "@/app/actions/bills";
-import { FieldControl } from "./field-control";
 import { REMINDER_OPTIONS, reminderValue } from "./status";
 import type { BillFormOptions, BillRow } from "./types";
 
@@ -143,15 +142,11 @@ function BillForm({ bill, options, onCancel, onSaved }: { bill: BillRow | null; 
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Amount" error={errors.amountCents?.message} required>
-            <FieldControl>
-              {(p) => (
-                <Controller
-                  control={form.control}
-                  name="amountCents"
-                  render={({ field }) => <CurrencyInput {...p} value={field.value} onChange={(c) => field.onChange(c ?? undefined)} onBlur={field.onBlur} currency={fmt.currency} locale={fmt.locale} placeholder="0.00" />}
-                />
-              )}
-            </FieldControl>
+            <Controller
+              control={form.control}
+              name="amountCents"
+              render={({ field }) => <CurrencyInput value={field.value} onChange={(c) => field.onChange(c ?? undefined)} onBlur={field.onBlur} currency={fmt.currency} locale={fmt.locale} placeholder="0.00" />}
+            />
           </Field>
           <Field label="Repeats" error={errors.frequency?.message} required>
             <Select {...form.register("frequency")} options={FREQUENCIES.map((f) => ({ value: f, label: FREQUENCY_LABELS[f] }))} />
@@ -163,7 +158,7 @@ function BillForm({ bill, options, onCancel, onSaved }: { bill: BillRow | null; 
           error={errors.dueDate?.message}
           required
         >
-          <FieldControl>{(p) => <Controller control={form.control} name="dueDate" render={({ field }) => <DatePicker {...p} value={field.value || null} onChange={(d) => field.onChange(d ?? "")} locale={fmt.locale} />} />}</FieldControl>
+          <Controller control={form.control} name="dueDate" render={({ field }) => <DatePicker value={field.value || null} onChange={(d) => field.onChange(d ?? "")} locale={fmt.locale} />} />
         </Field>
         <Controller
           control={form.control}
