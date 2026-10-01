@@ -71,6 +71,28 @@ export const connectSchema = z.object({
     .optional(),
 });
 
+/** A Lunch Flow API key as pasted. It is sent to the server only, stored encrypted and never logged. */
+const lunchFlowKey = z
+  .string({ required_error: "Paste your Lunch Flow API key", invalid_type_error: "Paste your Lunch Flow API key" })
+  .trim()
+  .min(1, "Paste your Lunch Flow API key")
+  .max(512, "That doesn't look like a Lunch Flow API key")
+  .regex(/^[\x21-\x7e]+$/, "That doesn't look like a Lunch Flow API key. Copy it again, without spaces.");
+
+export const lunchFlowPreviewSchema = z.object({ apiKey: lunchFlowKey });
+
+const lunchFlowAccountId = z.string().trim().min(1).max(100);
+
+/** How one Lunch Flow account comes into Harbour: as a new account, into an existing manual account, or not at all. */
+export const lunchFlowChoiceSchema = z.discriminatedUnion("action", [
+  z.object({ providerAccountId: lunchFlowAccountId, action: z.literal("new"), type: z.enum(ACCOUNT_TYPES) }),
+  z.object({ providerAccountId: lunchFlowAccountId, action: z.literal("link"), type: z.enum(ACCOUNT_TYPES), linkAccountId: uuid }),
+  z.object({ providerAccountId: lunchFlowAccountId, action: z.literal("skip") }),
+]);
+export type LunchFlowChoice = z.infer<typeof lunchFlowChoiceSchema>;
+
+export const lunchFlowConnectSchema = z.object({ apiKey: lunchFlowKey, accounts: z.array(lunchFlowChoiceSchema).max(100) });
+
 export const syncAccountSchema = z.object({ accountId: uuid });
 export const connectionIdSchema = z.object({ connectionId: uuid });
 export const disconnectSchema = z.object({ connectionId: uuid, deleteData: z.boolean().default(false) });

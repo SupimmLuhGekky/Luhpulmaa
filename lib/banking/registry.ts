@@ -3,6 +3,7 @@ import type { ProviderType } from "@prisma/client";
 import { env } from "@/lib/config/env";
 import { isEnabled } from "@/lib/flags";
 import { FlinksProvider } from "./providers/flinks";
+import { LunchFlowProvider } from "./providers/lunchflow";
 import { MockProvider } from "./providers/mock";
 import { PlaidProvider } from "./providers/plaid";
 import { ProviderError, type FinancialDataProvider } from "./types";
@@ -13,6 +14,9 @@ import { ProviderError, type FinancialDataProvider } from "./types";
  *  - test: always MOCK (deterministic fixtures)
  *  - production: BANKING_PROVIDER (plaid | flinks). "mock" is allowed only for demo
  *    deployments and every mock account is clearly labelled as simulated.
+ *
+ * Lunch Flow sits beside the default provider rather than replacing it: anyone can
+ * connect their own Lunch Flow account with its API key, whatever this server uses.
  */
 const instances: Partial<Record<ProviderType, FinancialDataProvider>> = {};
 
@@ -27,6 +31,9 @@ export function getProvider(type: ProviderType): FinancialDataProvider {
         break;
       case "FLINKS":
         instances.FLINKS = new FlinksProvider();
+        break;
+      case "LUNCHFLOW":
+        instances.LUNCHFLOW = new LunchFlowProvider();
         break;
       default:
         throw new ProviderError("INVALID_REQUEST", "This account is not connected through a data provider.");
@@ -52,4 +59,9 @@ export function bankingStatus() {
   const type = defaultProviderType();
   const provider = getProvider(type);
   return { enabled, provider: type, displayName: provider.displayName, configured: provider.isConfigured(), simulated: provider.isSimulated };
+}
+
+/** Lunch Flow needs no server keys, so it is available whenever bank connections are on. */
+export function lunchFlowAvailable(): boolean {
+  return isEnabled("ENABLE_BANKING");
 }

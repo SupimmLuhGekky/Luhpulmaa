@@ -26,7 +26,7 @@ export interface ConnectionRow {
   accountCount: number;
 }
 
-const PROVIDER_LABEL: Record<string, string> = { MOCK: "Simulated demo bank", PLAID: "Plaid", FLINKS: "Flinks", CSV: "CSV import", MANUAL: "Manual" };
+const PROVIDER_LABEL: Record<string, string> = { MOCK: "Simulated demo bank", PLAID: "Plaid", FLINKS: "Flinks", LUNCHFLOW: "Lunch Flow", CSV: "CSV import", MANUAL: "Manual" };
 
 const STATUS: Record<ConnectionRow["status"], { label: string; variant: "positive" | "warning" | "danger" | "neutral" }> = {
   ACTIVE: { label: "Connected", variant: "positive" },

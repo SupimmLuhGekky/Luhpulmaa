@@ -1,4 +1,4 @@
-import type { AccountType } from "@prisma/client";
+import type { AccountType, ProviderType } from "@prisma/client";
 
 export const LIABILITY_TYPES: AccountType[] = ["CREDIT_CARD", "LINE_OF_CREDIT", "LOAN", "MORTGAGE", "OTHER_LIABILITY"];
 export const CASH_TYPES: AccountType[] = ["CHEQUING", "SAVINGS", "CASH"];
@@ -11,6 +11,14 @@ export function isLiability(type: AccountType): boolean {
 
 export function hasCreditLimit(type: AccountType): boolean {
   return CREDIT_TYPES.includes(type);
+}
+
+/** Providers that don't say what kind of account each one is (their adapters set `reportsAccountTypes = false`). */
+export const PERSON_TYPED_PROVIDERS: readonly ProviderType[] = ["LUNCHFLOW"];
+
+/** The person sets the type and credit limit of manual accounts and of accounts from those providers. */
+export function typeChosenByPerson(account: { isManual: boolean; provider?: ProviderType | null }): boolean {
+  return account.isManual || (account.provider != null && PERSON_TYPED_PROVIDERS.includes(account.provider));
 }
 
 export type AccountGroup = "cash" | "credit" | "loans" | "investments" | "other";
@@ -46,6 +54,14 @@ export function groupOf(type: AccountType): AccountGroup {
  */
 export function manualAvailableBalance(type: AccountType, balanceCents: number, creditLimitCents: number | null | undefined): number {
   return hasCreditLimit(type) && creditLimitCents ? creditLimitCents - balanceCents : balanceCents;
+}
+
+/**
+ * Available balance of a connected account whose provider reports only its balance (Lunch Flow):
+ * the credit left when the person has set the card's limit in Harbour, otherwise unknown.
+ */
+export function connectedAvailableBalance(type: AccountType, balanceCents: number, creditLimitCents: number | null | undefined): number | null {
+  return hasCreditLimit(type) && creditLimitCents ? creditLimitCents - balanceCents : null;
 }
 
 export function netWorthGroup(type: AccountType): "cash" | "investments" | "otherAssets" | "creditCards" | "loans" | "otherLiabilities" {

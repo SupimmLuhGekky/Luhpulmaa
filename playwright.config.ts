@@ -1,14 +1,15 @@
 import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_PORT, E2E_SERVER_URL, e2eEnv } from "./tests/e2e/support/env";
+import { E2E_PORT, E2E_SERVER_URL, FAKE_LUNCHFLOW_KEY, FAKE_LUNCHFLOW_PORT, e2eEnv } from "./tests/e2e/support/env";
 
 /**
  * End-to-end smoke tests: `npx playwright test`.
  *
  * Starts `next dev` on port 3105 against the throwaway `budget_e2e` database (override
- * with E2E_DATABASE_URL; the name must end in `_e2e`). The global setup migrates it,
- * empties it and seeds the demo account. Set E2E_BASE_URL to test a server you started
- * yourself (pointed at the same database) instead.
+ * with E2E_DATABASE_URL; the name must end in `_e2e`), plus a stand-in for Lunch Flow's
+ * API on port 3106. The global setup migrates the database, empties it and seeds the
+ * demo account. Set E2E_BASE_URL to test a server you started yourself (pointed at the
+ * same database and at the stand-in) instead.
  */
 const env = e2eEnv();
 const external = process.env.E2E_BASE_URL;
@@ -45,12 +46,21 @@ export default defineConfig({
   ],
   webServer: external
     ? undefined
-    : {
-        command: `npx next dev --port ${E2E_PORT}`,
-        url: `${E2E_SERVER_URL}/api/health`,
-        env,
-        // Never test against whatever else is listening on the port (it may use another database).
-        reuseExistingServer: false,
-        timeout: 180_000,
-      },
+    : [
+        {
+          command: "node tests/e2e/support/fake-lunchflow.mjs",
+          url: `http://localhost:${FAKE_LUNCHFLOW_PORT}/health`,
+          env: { FAKE_LUNCHFLOW_PORT: String(FAKE_LUNCHFLOW_PORT), FAKE_LUNCHFLOW_KEY },
+          reuseExistingServer: false,
+          timeout: 30_000,
+        },
+        {
+          command: `npx next dev --port ${E2E_PORT}`,
+          url: `${E2E_SERVER_URL}/api/health`,
+          env,
+          // Never test against whatever else is listening on the port (it may use another database).
+          reuseExistingServer: false,
+          timeout: 180_000,
+        },
+      ],
 });

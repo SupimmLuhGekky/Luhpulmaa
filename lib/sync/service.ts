@@ -2,6 +2,8 @@ import "server-only";
 import type { ProviderConnection } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { addDays, fromDbDate, todayIn, toDbDate, type LocalDate } from "@/lib/dates";
+import { toCents } from "@/lib/finance/money";
+import { connectedAvailableBalance, isLiability } from "@/lib/accounts/types";
 import { decryptSecret } from "@/lib/security/encryption";
 import { getProvider } from "@/lib/banking/registry";
 import { ProviderError, type ProviderAccount, type ProviderTransaction } from "@/lib/banking/types";
@@ -38,19 +40,39 @@ export interface SyncOutcome {
   message?: string;
 }
 
-async function upsertAccounts(userId: string, connection: ProviderConnection, accounts: ProviderAccount[], today: LocalDate) {
+/**
+ * Type and balance fields for one provider account. When the provider doesn't report
+ * account types (Lunch Flow), the type and credit limit are the person's (kept from the
+ * existing account, else the provider's guess), and the holder-signed balance becomes an
+ * amount owed for debts.
+ */
+async function balanceFields(connectionId: string, a: ProviderAccount, reportsTypes: boolean) {
+  if (reportsTypes) {
+    return { providerOwnsType: true, type: a.type, current: a.currentBalanceCents, available: a.availableBalanceCents ?? null, limit: a.creditLimitCents ?? null };
+  }
+  const existing = await prisma.account.findUnique({
+    where: { connectionId_providerAccountId: { connectionId, providerAccountId: a.providerAccountId } },
+    select: { type: true, creditLimitCents: true },
+  });
+  const type = existing?.type ?? a.type;
+  const current = isLiability(type) ? -a.currentBalanceCents || 0 : a.currentBalanceCents;
+  const limit = existing?.creditLimitCents == null ? null : toCents(existing.creditLimitCents);
+  return { providerOwnsType: false, type, current, available: connectedAvailableBalance(type, current, limit), limit };
+}
+
+async function upsertAccounts(userId: string, connection: ProviderConnection, accounts: ProviderAccount[], today: LocalDate, reportsTypes: boolean) {
   const map = new Map<string, string>();
   for (const [index, a] of accounts.entries()) {
+    const f = await balanceFields(connection.id, a, reportsTypes);
     const row = await prisma.account.upsert({
       where: { connectionId_providerAccountId: { connectionId: connection.id, providerAccountId: a.providerAccountId } },
       update: {
         officialName: a.officialName ?? null,
         mask: a.mask ?? null,
-        type: a.type,
+        ...(f.providerOwnsType ? { type: f.type, creditLimitCents: f.limit } : {}),
         currency: a.currency,
-        currentBalanceCents: a.currentBalanceCents,
-        availableBalanceCents: a.availableBalanceCents ?? null,
-        creditLimitCents: a.creditLimitCents ?? null,
+        currentBalanceCents: f.current,
+        availableBalanceCents: f.available,
         lastSyncedAt: new Date(),
         status: "ACTIVE",
       },
@@ -62,11 +84,11 @@ async function upsertAccounts(userId: string, connection: ProviderConnection, ac
         name: a.name,
         officialName: a.officialName ?? null,
         mask: a.mask ?? null,
-        type: a.type,
+        type: f.type,
         currency: a.currency,
-        currentBalanceCents: a.currentBalanceCents,
-        availableBalanceCents: a.availableBalanceCents ?? null,
-        creditLimitCents: a.creditLimitCents ?? null,
+        currentBalanceCents: f.current,
+        availableBalanceCents: f.available,
+        creditLimitCents: f.limit,
         lastSyncedAt: new Date(),
         displayOrder: index,
       },
@@ -74,8 +96,8 @@ async function upsertAccounts(userId: string, connection: ProviderConnection, ac
     map.set(a.providerAccountId, row.id);
     await prisma.accountBalanceSnapshot.upsert({
       where: { accountId_date: { accountId: row.id, date: toDbDate(today) } },
-      update: { balanceCents: a.currentBalanceCents },
-      create: { userId, accountId: row.id, date: toDbDate(today), balanceCents: a.currentBalanceCents },
+      update: { balanceCents: f.current },
+      create: { userId, accountId: row.id, date: toDbDate(today), balanceCents: f.current },
     });
   }
   return map;
@@ -118,7 +140,7 @@ export async function syncConnection(userId: string, connectionId: string, trigg
     const token = decryptSecret(connection.encryptedAccessToken);
 
     const providerAccounts = await provider.getBalances(token);
-    const accountMap = await upsertAccounts(userId, connection, providerAccounts, today);
+    const accountMap = await upsertAccounts(userId, connection, providerAccounts, today, provider.reportsAccountTypes);
 
     // Range providers re-read an overlapping window; cursor providers resume from the cursor.
     const lastSynced = connection.lastSyncedAt ? todayIn(user.timeZone, connection.lastSyncedAt) : null;

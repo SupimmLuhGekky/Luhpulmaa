@@ -128,7 +128,9 @@ ingest path as bank sync inside an `ImportBatch` that can be undone.
 A transaction is a duplicate when, in order: it has the same provider id in the same account; it
 is the posted version of a pending transaction already stored; it has the same fingerprint (date,
 amount, normalised description); or it matches fuzzily (same account and amount, dates within a
-small window, similar merchant) when at least one side has no provider id.
+small window, a similar merchant or bank description) when at least one side has no provider id.
+Of several fuzzy matches, the most similar wins, then the closest in date. This is what lets a
+Lunch Flow account continue an account filled from CSV files without importing anything twice.
 
 ### Categorisation (`lib/transactions/categorization.ts`)
 
@@ -155,8 +157,9 @@ the others. Triggered by Vercel Cron (`vercel.json`), `npm run jobs:daily`, or t
 
 ## Bank data providers
 
-`lib/banking` defines `FinancialDataProvider` and three adapters: mock (simulated bank), Flinks and
-Plaid. See [PROVIDERS.md](PROVIDERS.md) for setup and for what works with Neo Financial.
+`lib/banking` defines `FinancialDataProvider` and four adapters: mock (simulated bank), Lunch Flow
+(each person's own API key, beside the server's provider), Flinks and Plaid. See
+[PROVIDERS.md](PROVIDERS.md) for setup and for what works with Neo Financial.
 
 ## The ledger
 

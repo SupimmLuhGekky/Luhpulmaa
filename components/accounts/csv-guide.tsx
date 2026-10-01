@@ -29,7 +29,7 @@ export function CsvGuide({ enabled, onAddManually }: { enabled: boolean; onAddMa
         <h3 id="csv-neo" className="text-sm font-semibold">
           Export from Neo Financial
         </h3>
-        <p className="mt-1 text-[13px] text-muted-foreground">Neo doesn&apos;t connect through Plaid, so a CSV export from Neo&apos;s web app is the reliable way to bring in your Neo accounts.</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">Neo doesn&apos;t connect through Plaid. A CSV export from Neo&apos;s web app needs nothing else, and it can also bring in older history for an account you connect through Lunch Flow.</p>
         <ol className="mt-3 space-y-2.5">
           {NEO_STEPS.map((step, i) => (
             <li key={i} className="flex gap-3 text-[13px] text-muted-foreground">

@@ -80,7 +80,7 @@ export default function LegalPage() {
             </ul>
             <h3>Connections and imports</h3>
             <p>
-              If you connect a financial institution, you sign in inside the data provider&apos;s own window (for example Flinks or Plaid), under that provider&apos;s terms and privacy policy. Harbour receives read-only account
+              If you connect a financial institution, you sign in inside the data provider&apos;s own window (for example Flinks or Plaid) or in your own Lunch Flow account, under that provider&apos;s terms and privacy policy. Harbour receives read-only account
               information, never your bank password. You can disconnect at any time. Imported CSV files are read only to create the transactions you confirm.
             </p>
             <h3>The service</h3>
@@ -104,7 +104,7 @@ export default function LegalPage() {
                 <strong>Your financial information:</strong> the accounts, balances, transactions, budgets, goals, income, bills, subscriptions, rules, notes and tags that you add, import or connect.
               </li>
               <li>
-                <strong>Connection tokens:</strong> when you connect a bank, the access token the data provider issues. It is encrypted before it is stored.
+                <strong>Connection tokens:</strong> when you connect a bank, the access token the data provider issues, or the Lunch Flow API key you paste. It is encrypted before it is stored.
               </li>
               <li>
                 <strong>Security records:</strong> sign-in activity, the devices you are signed in on, and approximate network information, used to protect your account and shown to you in Settings.

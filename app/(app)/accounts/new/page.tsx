@@ -44,6 +44,7 @@ export default async function NewAccountPage({ searchParams }: { searchParams: P
         csvEnabled={isEnabled("ENABLE_CSV_IMPORT")}
         multiCurrency={isEnabled("ENABLE_MULTI_CURRENCY")}
         currency={user.currency}
+        demo={user.isDemo}
       />
     </div>
   );

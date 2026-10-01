@@ -30,9 +30,9 @@ Dock from Safari, and ships as a self-contained Mac desktop app that keeps your 
   spending this month, net worth, budget, goals, upcoming bills, subscriptions, a 30-day cash
   flow estimate, spending by category, recent transactions and insights. On a phone the most
   useful cards come first, with quick actions to add a transaction, goal, budget or account.
-- **Accounts**: connect a bank through a data provider's hosted sign-in, add manual accounts
-  (cash, loans, investments, property), hide or archive accounts, see balance history and sync
-  status.
+- **Accounts**: connect a bank through your own Lunch Flow account (works with Neo Financial) or
+  a data provider's hosted sign-in, add manual accounts (cash, loans, investments, property),
+  hide or archive accounts, see balance history and sync status.
 - **Transactions**: search, filters (account, category, type, tag, dates, amounts, pending,
   needs review), bulk categorise, a detail panel to edit category, merchant name, notes, tags,
   transfer and recurring flags, and an explanation of why each transaction got its category.
@@ -121,7 +121,7 @@ All settings are environment variables, validated at startup by `lib/config/env.
 | `APP_URL` | Yes in production | Public URL, used in emails, redirects and origin checks |
 | `APP_ENV` | No | Overrides `NODE_ENV` for app behaviour |
 | `BANKING_PROVIDER` | No | `mock`, `flinks` or `plaid` (see [PROVIDERS.md](docs/PROVIDERS.md)) |
-| `FLINKS_*`, `PLAID_*` | For live bank connections | Provider credentials |
+| `FLINKS_*`, `PLAID_*` | For live bank connections through Flinks or Plaid | Provider credentials (Lunch Flow needs none: each person pastes their own key) |
 | `EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY` | For real email | `console` (default) or `resend` |
 | `ANTHROPIC_API_KEY` | For AI features | Only used when an AI flag is on |
 | `CRON_SECRET` | In production | Protects `GET /api/cron/daily` |
@@ -131,7 +131,7 @@ Feature flags (`true` or `false`):
 | Flag | Default | Turns on |
 | --- | --- | --- |
 | `DEMO_MODE` | `true` outside production, `false` in production | "Try the demo" with simulated data |
-| `ENABLE_BANKING` | `true` | Bank connections through the provider |
+| `ENABLE_BANKING` | `true` | Bank connections through the provider and Lunch Flow |
 | `ENABLE_CSV_IMPORT` | `true` | CSV import |
 | `ENABLE_AUTOMATIONS` | `true` | Automations |
 | `ENABLE_NOTIFICATIONS` | `true` | Notifications and reminders |
@@ -154,13 +154,13 @@ Needs real credentials or accounts:
 
 | Feature | Needs |
 | --- | --- |
-| Live bank connections | A Flinks contract (covers Neo Financial) or a Plaid account (does not cover Neo) |
+| Live bank connections | Each person's own Lunch Flow subscription (covers Neo Financial), or for the whole server a Flinks contract (covers Neo) or a Plaid account (does not cover Neo) |
 | Email delivery | A Resend API key and a verified sending domain |
 | AI features | An Anthropic API key |
 | Production hosting | A PostgreSQL database, `AUTH_SECRET`, `ENCRYPTION_KEY`, `CRON_SECRET` |
 
-For Neo Financial specifically, CSV import is the way to bring in real data today. See
-[docs/PROVIDERS.md](docs/PROVIDERS.md).
+For Neo Financial specifically, connect through Lunch Flow or import CSV files from Neo's website.
+See [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Tests
 
@@ -226,7 +226,7 @@ app/                    Next.js App Router
   legal/                terms and privacy
 components/             UI by feature, plus components/ui (shared primitives)
 lib/                    server-only domain services, one folder per area
-  banking/              provider abstraction and the mock, Flinks and Plaid adapters
+  banking/              provider abstraction and the mock, Lunch Flow, Flinks and Plaid adapters
   sync/ import/         bank sync and CSV import pipelines
   transactions/         normalisation, duplicate detection, categorisation, transfers
   finance/ dates/       money in integer cents, calendar dates
@@ -241,8 +241,12 @@ docs/                   architecture, providers, desktop app
 
 ## Known limitations
 
-- **Neo Financial has no live connection for individuals.** Plaid does not cover Neo, and Flinks,
-  which does, works only under a business contract. CSV import is the supported path.
+- **Neo Financial connects only through Lunch Flow for individuals.** Plaid does not cover Neo,
+  and Flinks, which does, works only under a business contract. Lunch Flow is a paid service of
+  its own; CSV import is the free path.
+- **The Lunch Flow adapter has not been run against a live Lunch Flow account.** It follows Lunch
+  Flow's published Personal API and is covered by tests against stand-ins; the first real
+  connection is its first live check.
 - **The Flinks adapter has not been tested against a live Flinks instance.** It follows Flinks'
   published API and is covered by unit tests on recorded shapes; verify it in a Flinks sandbox
   before relying on it.

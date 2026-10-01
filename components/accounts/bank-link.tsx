@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, ShieldCheck } from "lucide-react";
+import { Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/shared/notice";
@@ -10,7 +10,11 @@ import { isFlinksOrigin, parseFlinksMessage, type FlinksConnectResult } from "@/
 import type { LinkSession } from "@/lib/banking/types";
 import { cn } from "@/lib/utils";
 import { completeConnectionAction, createLinkSessionAction, reconnectSimulatedAction, syncConnectionAction } from "@/app/actions/accounts";
+import { ImportingStatus, LinkSummary, type LinkOutcome } from "./link-summary";
+import { LunchFlowDialog } from "./lunch-flow";
 import type { ConnectionView } from "./types";
+
+export type { LinkOutcome };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plaid Link (loaded on demand from Plaid's CDN, which the CSP allows)
@@ -66,19 +70,12 @@ function loadPlaid(): Promise<PlaidStatic> {
 // Link state machine shared by "Connect a bank" and "Reconnect"
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface LinkOutcome {
-  institution: string;
-  accounts: number | null;
-  added: number;
-  /** The connection was saved but the import after it failed (safe message). */
-  warning: string | null;
-  reconnected: boolean;
-}
-
 export type LinkPhase =
   | { kind: "idle" }
   | { kind: "starting"; connectionId: string | null }
   | { kind: "widget"; session: LinkSession; connectionId: string | null }
+  /** Reconnecting a Lunch Flow connection: the person pastes a new key (LunchFlowDialog). */
+  | { kind: "lunchflow"; connectionId: string; institution: string }
   | { kind: "importing"; institution: string | null; reconnect: boolean }
   | { kind: "done"; outcome: LinkOutcome }
   | { kind: "error"; message: string };
@@ -180,6 +177,10 @@ export function useBankLink() {
   const start = React.useCallback(
     async (reconnect?: ReconnectTarget) => {
       target.current = reconnect ?? null;
+      if (reconnect?.provider === "LUNCHFLOW") {
+        setPhase({ kind: "lunchflow", connectionId: reconnect.id, institution: reconnect.institution });
+        return;
+      }
       if (reconnect?.provider === "MOCK") {
         setPhase({ kind: "importing", institution: reconnect.institution, reconnect: true });
         settle(await reconnectSimulatedAction({ connectionId: reconnect.id }));
@@ -207,8 +208,8 @@ export function useBankLink() {
     setPhase({ kind: "idle" });
   }, []);
 
-  const busyWith = phase.kind === "starting" || phase.kind === "widget" ? phase.connectionId : undefined;
-  return { phase, start, connectSimulated, onFlinksLogin, reset, busy: phase.kind === "starting" || phase.kind === "widget" || phase.kind === "importing", busyWith };
+  const busyWith = phase.kind === "starting" || phase.kind === "widget" || phase.kind === "lunchflow" ? phase.connectionId : undefined;
+  return { phase, start, connectSimulated, onFlinksLogin, reset, busy: phase.kind === "starting" || phase.kind === "widget" || phase.kind === "lunchflow" || phase.kind === "importing", busyWith };
 }
 
 export type BankLink = ReturnType<typeof useBankLink>;
@@ -216,10 +217,6 @@ export type BankLink = ReturnType<typeof useBankLink>;
 // ─────────────────────────────────────────────────────────────────────────────
 // UI
 // ─────────────────────────────────────────────────────────────────────────────
-
-function plural(n: number, word: string) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
 
 /** Flinks Connect in an iframe. Only messages from the Flinks origin we opened are trusted. */
 export function FlinksConnectDialog({ link }: { link: BankLink }) {
@@ -275,43 +272,6 @@ export function FlinksConnectDialog({ link }: { link: BankLink }) {
   );
 }
 
-export function LinkSummary({ outcome, actions }: { outcome: LinkOutcome; actions?: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-positive/25 bg-positive-soft p-4">
-      <div className="flex items-start gap-3">
-        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-positive" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">
-            {outcome.institution} {outcome.reconnected ? "is reconnected" : "is connected"}
-          </p>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {outcome.accounts !== null ? `${plural(outcome.accounts, "account")} · ` : ""}
-            {outcome.added === 0 ? "no new transactions" : `${plural(outcome.added, "new transaction")} imported`}
-          </p>
-          {outcome.warning ? (
-            <Notice tone="warning" className="mt-3" title="The import didn't finish">
-              {outcome.warning} Harbour will try again on the next sync.
-            </Notice>
-          ) : null}
-          {actions ? <div className="mt-3 flex flex-wrap gap-2">{actions}</div> : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function ImportingStatus({ institution }: { institution: string | null }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-border bg-subtle p-4">
-      <Loader2 className="size-5 shrink-0 animate-spin text-primary" aria-hidden />
-      <div className="min-w-0">
-        <p className="text-sm font-medium">Importing accounts and transactions…</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{institution ? `From ${institution}. ` : ""}This can take a little while for a long history. Keep this page open.</p>
-      </div>
-    </div>
-  );
-}
-
 /** Inline progress, error and summary for a link started on the page itself. */
 export function LinkStatus({ link, doneActions }: { link: BankLink; doneActions?: React.ReactNode }) {
   const { phase, reset } = link;
@@ -337,8 +297,8 @@ export function LinkStatus({ link, doneActions }: { link: BankLink; doneActions?
 }
 
 /**
- * Dialogs for reconnecting from a list or detail page: the Flinks window, then a
- * progress → result dialog. (Plaid draws its own overlay.)
+ * Dialogs for reconnecting from a list or detail page: the Flinks window or Lunch Flow's
+ * key dialog, then a progress → result dialog. (Plaid draws its own overlay.)
  */
 export function BankLinkDialogs({ link }: { link: BankLink }) {
   const { phase, reset } = link;
@@ -347,6 +307,7 @@ export function BankLinkDialogs({ link }: { link: BankLink }) {
   return (
     <>
       <FlinksConnectDialog link={link} />
+      <LunchFlowDialog open={phase.kind === "lunchflow"} reconnect={phase.kind === "lunchflow" ? phase.institution : null} onOpenChange={(o) => (!o ? reset() : undefined)} />
       <Dialog open={open} onOpenChange={(o) => (!o && !importing ? reset() : undefined)}>
         <DialogContent size="sm" hideClose={importing} aria-describedby={undefined} onEscapeKeyDown={(e) => importing && e.preventDefault()} onInteractOutside={(e) => importing && e.preventDefault()}>
           <DialogHeader>

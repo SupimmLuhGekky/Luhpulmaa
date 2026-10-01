@@ -31,12 +31,12 @@ export interface ConnectionsPanelProps {
 
 /** Provider connections with their health and Sync now / Reconnect / Disconnect. */
 export function ConnectionsPanel({ connections, banking, f, syncing, reconnecting, linkBusy, onSync, onReconnect, onDisconnect }: ConnectionsPanelProps) {
-  const canConnect = banking.enabled && banking.configured;
+  const canConnect = banking.enabled && (banking.configured || banking.lunchFlow);
   const description = !banking.enabled
     ? "Turned off on this server, so connected accounts aren't updating"
     : banking.simulated
-      ? "Simulated banks for trying Harbour"
-      : canConnect
+      ? "Simulated demo banks, and any Lunch Flow account you connect"
+      : banking.configured && !banking.lunchFlow
         ? `Accounts that update through ${banking.displayName}`
         : "Accounts that update automatically";
   return (
@@ -82,6 +82,7 @@ export function ConnectionsPanel({ connections, banking, f, syncing, reconnectin
                           <FlaskConical aria-hidden /> Simulated
                         </Badge>
                       ) : null}
+                      {c.provider === "LUNCHFLOW" ? <Badge variant="outline">Through Lunch Flow</Badge> : null}
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground" title={c.lastSyncedAt ? f.dateTime(c.lastSyncedAt) : undefined}>
                       {plural(c.accountCount, "account")} · {synced}

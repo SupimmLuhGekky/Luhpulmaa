@@ -92,6 +92,7 @@ export class FlinksProvider implements FinancialDataProvider {
   readonly displayName = "Flinks";
   readonly isSimulated = false;
   readonly reportsRemovals = false;
+  readonly reportsAccountTypes = true;
 
   isConfigured() {
     const e = env();

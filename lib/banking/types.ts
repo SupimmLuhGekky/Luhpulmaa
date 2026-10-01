@@ -11,7 +11,8 @@
  *
  * Bank credentials never pass through this application: users authenticate with
  * their institution inside the provider's own hosted flow (Plaid Link, Flinks
- * Connect). We only receive and store (encrypted) the provider's access token.
+ * Connect, or their own Lunch Flow account). We only receive and store (encrypted)
+ * the provider's access token or API key.
  */
 import type { AccountType, ProviderType } from "@prisma/client";
 import type { LocalDate } from "@/lib/dates";
@@ -98,6 +99,13 @@ export interface FinancialDataProvider {
    * providers only return what is in the window, so a released card hold just disappears.
    */
   readonly reportsRemovals: boolean;
+  /**
+   * False when the provider doesn't say what kind of account each one is (Lunch Flow).
+   * Then `type` is only a guess for new accounts, the person's choice in Harbour is kept,
+   * and `currentBalanceCents` is signed from the holder's view (negative = owed): the
+   * sync turns it into an amount owed once it knows the account is a liability.
+   */
+  readonly reportsAccountTypes: boolean;
   isConfigured(): boolean;
   createLinkSession(userId: string, opts?: { reconnectItemId?: string; accessToken?: string; language?: "en" | "fr" }): Promise<LinkSession>;
   exchangePublicToken(userId: string, publicToken: string, metadata?: Record<string, unknown>): Promise<ExchangeResult>;

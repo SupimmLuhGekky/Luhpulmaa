@@ -29,6 +29,11 @@ const schema = z.object({
   FLINKS_SECRET: z.string().optional(),
   /** Flinks API key (`x-api-key`) for data endpoints, when your instance requires one. */
   FLINKS_API_KEY: z.string().optional(),
+  /**
+   * Lunch Flow's Personal API. Needs no server keys: each person pastes their own API key.
+   * Override only to point tests at a stand-in server (plain http is refused in production).
+   */
+  LUNCHFLOW_API_URL: z.string().url().default("https://www.lunchflow.app/api/v1"),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_FROM: z.string().default("Harbour <no-reply@harbour.local>"),
   RESEND_API_KEY: z.string().optional(),

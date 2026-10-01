@@ -8,6 +8,10 @@ export const DEFAULT_E2E_DATABASE_URL = "postgresql://budget:budget@localhost:54
 export const E2E_PORT = 3105;
 export const E2E_SERVER_URL = `http://localhost:${E2E_PORT}`;
 
+/** The stand-in for Lunch Flow's API (support/fake-lunchflow.mjs) and the only key it accepts. */
+export const FAKE_LUNCHFLOW_PORT = 3106;
+export const FAKE_LUNCHFLOW_KEY = "lf-fictional-test-key";
+
 export function e2eDatabaseUrl(): string {
   const url = process.env.E2E_DATABASE_URL || DEFAULT_E2E_DATABASE_URL;
   assertE2eDatabase(url);
@@ -40,6 +44,7 @@ const SCRUBBED = [
   "FLINKS_CONNECT_URL",
   "FLINKS_SECRET",
   "FLINKS_API_KEY",
+  "LUNCHFLOW_API_URL",
   "MOCK_TODAY",
 ];
 
@@ -61,6 +66,8 @@ export function e2eEnv(): Record<string, string> {
     ENCRYPTION_KEY: secret("ENCRYPTION_KEY", 32),
     CRON_SECRET: secret("CRON_SECRET", 48),
     BANKING_PROVIDER: "mock",
+    // Lunch Flow calls go to the local stand-in, never to lunchflow.app.
+    LUNCHFLOW_API_URL: `http://localhost:${FAKE_LUNCHFLOW_PORT}/api/v1`,
     EMAIL_PROVIDER: "console",
     DEMO_MODE: "true",
     ENABLE_BANKING: "true",

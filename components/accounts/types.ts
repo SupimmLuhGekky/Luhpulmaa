@@ -15,6 +15,8 @@ export interface BankingInfo {
   configured: boolean;
   /** The provider only produces simulated data (demo mode). */
   simulated: boolean;
+  /** People can connect their own Lunch Flow account (needs no server keys). */
+  lunchFlow: boolean;
 }
 
 /** Ways to add an account on /accounts/new (`?method=`). */

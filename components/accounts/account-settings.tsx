@@ -83,14 +83,20 @@ export function AccountSettings({ account, connection, bankingEnabled, transacti
   const form = useForm<Details>({ resolver: zodResolver(detailsSchema), defaultValues: defaults });
   React.useEffect(() => form.reset(defaults), [defaults, form]);
   const type = form.watch("type");
-  const typeFlips = account.isManual && isLiability(type) !== account.isLiability;
+  const typeFlips = account.typeEditable && isLiability(type) !== account.isLiability;
+  // A manual balance keeps its amount; a synced one arrives signed from the holder's view, so it flips.
+  const flipHint = !typeFlips
+    ? undefined
+    : account.isManual
+      ? `As ${isLiability(type) ? "a debt" : "an asset"}, the balance of ${f.amount(account.currentBalanceCents, account.currency)} will count as ${isLiability(type) ? "an amount owed" : "money you have"}.`
+      : `As ${isLiability(type) ? "a debt" : "an asset"}, this account will show ${isLiability(type) ? "" : "a balance of "}${f.amount(-account.currentBalanceCents || 0, account.currency)}${isLiability(type) ? " owed" : ""}.`;
 
   const save = form.handleSubmit(async (v) => {
     setError(null);
     const patch: z.input<typeof accountUpdateSchema> = {};
     if (v.name !== account.name) patch.name = v.name;
-    if (account.isManual && v.type !== account.type) patch.type = v.type;
-    if (account.isManual && hasCreditLimit(v.type) && v.creditLimitCents !== account.creditLimitCents) patch.creditLimitCents = v.creditLimitCents;
+    if (account.typeEditable && v.type !== account.type) patch.type = v.type;
+    if (account.typeEditable && hasCreditLimit(v.type) && v.creditLimitCents !== account.creditLimitCents) patch.creditLimitCents = v.creditLimitCents;
     if (!Object.keys(patch).length) return;
     const res = await updateAccountAction({ id: account.id, patch });
     if (!res.ok) {
@@ -140,9 +146,9 @@ export function AccountSettings({ account, connection, bankingEnabled, transacti
           <Field label="Name" error={form.formState.errors.name?.message}>
             <Input autoComplete="off" maxLength={60} {...form.register("name")} />
           </Field>
-          {account.isManual ? (
+          {account.typeEditable ? (
             <>
-              <Field label="Type" error={form.formState.errors.type?.message} hint={typeFlips ? `As ${isLiability(type) ? "a debt" : "an asset"}, the balance of ${f.amount(account.currentBalanceCents, account.currency)} will count as ${isLiability(type) ? "an amount owed" : "money you have"}.` : undefined}>
+              <Field label="Type" error={form.formState.errors.type?.message} hint={flipHint}>
                 <Select {...form.register("type")}>
                   <AccountTypeOptions />
                 </Select>
@@ -239,7 +245,11 @@ export function AccountSettings({ account, connection, bankingEnabled, transacti
                 </Button>
               </div>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">The balance, type and credit limit come from your bank.</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {account.typeEditable
+                ? `The balance comes from ${connection.provider === "LUNCHFLOW" ? "Lunch Flow" : "your bank"}, which doesn't say what kind of account this is, so you set its type above.`
+                : "The balance, type and credit limit come from your bank."}
+            </p>
           </div>
         ) : null}
       </div>

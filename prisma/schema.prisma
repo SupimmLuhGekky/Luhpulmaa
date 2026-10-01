@@ -166,6 +166,8 @@ enum ProviderType {
   FLINKS
   MANUAL
   CSV
+  /// Lunch Flow (lunchflow.app): the person's own account there, read with an API key they paste in.
+  LUNCHFLOW
 }
 
 model Institution {

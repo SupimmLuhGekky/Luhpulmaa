@@ -46,6 +46,9 @@ export function AccountsOverview({ accounts, connections, totals, banking, csvEn
   const { syncing, syncConnection } = useSync();
 
   const hiddenCount = accounts.filter((a) => a.isHidden).length;
+  const lunchFlow = banking.enabled && banking.lunchFlow;
+  // Once Lunch Flow is connected, the Neo tip has done its job.
+  const neoHelp = (csvEnabled || lunchFlow) && !connections.some((c) => c.provider === "LUNCHFLOW");
   const groups = React.useMemo(() => groupAccounts(accounts, { includeHidden: showHidden, baseCurrency: f.currency }), [accounts, showHidden, f.currency]);
 
   const toggleHidden = (value: boolean) => {
@@ -147,16 +150,29 @@ export function AccountsOverview({ accounts, connections, totals, banking, csvEn
             onReconnect={(c) => void link.start(c)}
             onDisconnect={setDisconnecting}
           />
-          {csvEnabled ? (
+          {neoHelp ? (
             <Card className="p-5">
               <div className="flex gap-3">
                 <FileUp className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Banking with Neo Financial?</p>
-                  <p className="mt-1 text-[13px] text-muted-foreground">Neo doesn&apos;t connect through Plaid, but its web app exports your transactions as a CSV file you can import here.</p>
-                  <Link href="/accounts/new?method=csv" className="mt-2 inline-block text-[13px] font-medium text-primary hover:underline">
-                    How to export from Neo
-                  </Link>
+                  <p className="mt-1 text-[13px] text-muted-foreground">
+                    {lunchFlow
+                      ? `Neo doesn't connect through Plaid. Connect it through your own Lunch Flow account${csvEnabled ? ", or import CSV files from Neo's web app" : ""}.`
+                      : "Neo doesn't connect through Plaid, but its web app exports your transactions as a CSV file you can import here."}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                    {lunchFlow ? (
+                      <Link href="/accounts/new?method=connect" className="text-[13px] font-medium text-primary hover:underline">
+                        Connect through Lunch Flow
+                      </Link>
+                    ) : null}
+                    {csvEnabled ? (
+                      <Link href="/accounts/new?method=csv" className="text-[13px] font-medium text-primary hover:underline">
+                        How to export from Neo
+                      </Link>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </Card>

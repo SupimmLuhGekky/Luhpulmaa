@@ -13,7 +13,18 @@ import {
   syncConnectionNow,
   updateAccount,
 } from "@/lib/accounts/service";
-import { accountUpdateSchema, connectionIdSchema, connectSchema, disconnectSchema, linkSessionSchema, manualAccountSchema, syncAccountSchema } from "@/lib/accounts/schemas";
+import { connectLunchFlow, previewLunchFlow } from "@/lib/accounts/lunchflow";
+import {
+  accountUpdateSchema,
+  connectionIdSchema,
+  connectSchema,
+  disconnectSchema,
+  linkSessionSchema,
+  lunchFlowConnectSchema,
+  lunchFlowPreviewSchema,
+  manualAccountSchema,
+  syncAccountSchema,
+} from "@/lib/accounts/schemas";
 import { withProviderErrors } from "@/lib/accounts/errors";
 import { enforceSyncLimit } from "@/lib/accounts/limits";
 import { revalidateAccountViews } from "@/lib/accounts/revalidate";
@@ -49,6 +60,20 @@ export const createLinkSessionAction = authedAction(linkSessionSchema, async ({ 
 export const completeConnectionAction = authedAction(connectSchema, async ({ publicToken, metadata }, user) => {
   await enforceSyncLimit("sync", user.id);
   const result = await withProviderErrors(() => completeConnection(user.id, publicToken, metadata));
+  revalidateAccountViews();
+  return result;
+});
+
+/** Lists what a pasted Lunch Flow API key can read. Nothing is saved. */
+export const previewLunchFlowAction = authedAction(lunchFlowPreviewSchema, async ({ apiKey }, user) => {
+  await enforceSyncLimit("link", user.id);
+  return withProviderErrors(() => previewLunchFlow(user, apiKey));
+});
+
+/** Saves the Lunch Flow key (encrypted) with the person's choices and runs the first import. */
+export const connectLunchFlowAction = authedAction(lunchFlowConnectSchema, async ({ apiKey, accounts }, user) => {
+  await enforceSyncLimit("sync", user.id);
+  const result = await withProviderErrors(() => connectLunchFlow(user, apiKey, accounts));
   revalidateAccountViews();
   return result;
 });

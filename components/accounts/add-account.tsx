@@ -20,6 +20,8 @@ export interface AddAccountProps {
   csvEnabled: boolean;
   multiCurrency: boolean;
   currency: string;
+  /** The shared demo account. */
+  demo: boolean;
 }
 
 interface MethodInfo {
@@ -32,10 +34,12 @@ interface MethodInfo {
 }
 
 function connectInfo(banking: BankingInfo): Pick<MethodInfo, "description" | "badge" | "muted"> {
-  if (!banking.enabled || !banking.configured) return { description: "Not available on this server. See your other options.", badge: { label: "Unavailable", variant: "neutral" }, muted: true };
-  if (banking.simulated) return { description: "Try a simulated bank with sample data. Nothing real is connected.", badge: { label: "Demo", variant: "info" } };
-  if (banking.provider === "PLAID") return { description: "Sign in through Plaid's secure window so balances and transactions update on their own. Neo isn't supported." };
-  return { description: `Sign in through ${possessive(banking.displayName)} secure window so balances and transactions update on their own.` };
+  const lunchFlow = banking.enabled && banking.lunchFlow;
+  if (!banking.enabled || (!banking.configured && !lunchFlow)) return { description: "Not available on this server. See your other options.", badge: { label: "Unavailable", variant: "neutral" }, muted: true };
+  if (!banking.configured) return { description: "Balances and transactions update on their own through your Lunch Flow account." };
+  if (banking.simulated) return { description: "Try a simulated bank with sample data, or connect your own Lunch Flow account.", badge: { label: "Demo", variant: "info" } };
+  if (banking.provider === "PLAID") return { description: "Sign in through Plaid's secure window, or use Lunch Flow for banks Plaid doesn't reach, like Neo." };
+  return { description: `Sign in through ${possessive(banking.displayName)} secure window, or connect your own Lunch Flow account.` };
 }
 
 const PANEL_TITLES: Record<AddMethod, { title: string; description: string }> = {
@@ -45,7 +49,7 @@ const PANEL_TITLES: Record<AddMethod, { title: string; description: string }> = 
 };
 
 /** Pick how to add an account (CSV, manual, bank connection); the choice is kept in `?method=`. */
-export function AddAccount({ initialMethod, banking, institutions, csvEnabled, multiCurrency, currency }: AddAccountProps) {
+export function AddAccount({ initialMethod, banking, institutions, csvEnabled, multiCurrency, currency, demo }: AddAccountProps) {
   const [method, setMethod] = React.useState<AddMethod | "">(initialMethod ?? "");
   const panelRef = React.useRef<HTMLDivElement>(null);
 
@@ -63,7 +67,7 @@ export function AddAccount({ initialMethod, banking, institutions, csvEnabled, m
       icon: FileUp,
       title: "Import a CSV file",
       description: csvEnabled ? "Download transactions from your bank's website, then import the file." : "Turned off on this server.",
-      badge: csvEnabled ? { label: "Best for Neo Financial", variant: "primary" } : { label: "Unavailable", variant: "neutral" },
+      badge: csvEnabled ? { label: "Free", variant: "primary" } : { label: "Unavailable", variant: "neutral" },
       muted: !csvEnabled,
     },
     { value: "manual", icon: PencilLine, title: "Enter it by hand", description: "Type in the balance and update it yourself. Nothing to connect." },
@@ -122,7 +126,14 @@ export function AddAccount({ initialMethod, banking, institutions, csvEnabled, m
                 {m === "csv" ? <CsvGuide enabled={csvEnabled} onAddManually={() => choose("manual", { focus: true })} /> : null}
                 {m === "manual" ? <ManualAccountForm currency={currency} multiCurrency={multiCurrency} /> : null}
                 {m === "connect" ? (
-                  <ConnectBank banking={banking} institutions={institutions} csvEnabled={csvEnabled} onUseCsv={() => choose("csv", { focus: true })} onUseManual={() => choose("manual", { focus: true })} />
+                  <ConnectBank
+                    banking={banking}
+                    institutions={institutions}
+                    csvEnabled={csvEnabled}
+                    demo={demo}
+                    onUseCsv={() => choose("csv", { focus: true })}
+                    onUseManual={() => choose("manual", { focus: true })}
+                  />
                 ) : null}
               </div>
             </Card>

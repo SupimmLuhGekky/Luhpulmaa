@@ -11,9 +11,21 @@ if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
   process.exit(1);
 }
 
+/** What changed in each version, newest first. Versions without an entry get no "What's new" section. */
+const CHANGES = {
+  "0.2.0": [
+    "Connect Neo Financial and other banks through your own [Lunch Flow](https://www.lunchflow.app) account (a separate, paid service): paste its API key in **Accounts → Add account → Connect a bank**, and balances and transactions update on their own.",
+    "An account you filled from CSV files can continue through Lunch Flow, keeping its history without importing anything twice.",
+    "Accounts from Lunch Flow get the type you choose (credit card, chequing…), which you can change in the account's settings.",
+  ],
+};
+
+const changes = CHANGES[/** @type {keyof typeof CHANGES} */ (version)];
+const whatsNew = changes ? `## What's new\n\n${changes.map((c) => `- ${c}`).join("\n")}\n\n` : "";
+
 const notes = `Harbour ${version} for Mac: the Harbour web app and its database, running entirely on your Mac. No account with a hosting service, and your financial data never leaves your computer.
 
-## Download
+${whatsNew}## Download
 
 | Your Mac | File |
 | --- | --- |

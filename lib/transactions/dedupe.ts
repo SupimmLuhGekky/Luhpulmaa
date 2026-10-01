@@ -63,17 +63,30 @@ export function findDuplicate(candidate: DedupeCandidate, existing: DedupeExisti
   const byFp = sameAccount.find((e) => e.fingerprint === fp && !(candidate.providerTransactionId && e.providerTransactionId && e.providerTransactionId !== candidate.providerTransactionId));
   if (byFp) return { kind: "fingerprint", existingId: byFp.id };
 
-  let best: { id: string; score: number } | null = null;
+  let best: { id: string; score: number; days: number } | null = null;
   for (const e of sameAccount) {
     if (e.amountCents !== candidate.amountCents) continue;
-    if (Math.abs(daysBetween(e.date, candidate.date)) > FUZZY_DATE_WINDOW_DAYS) continue;
+    const days = Math.abs(daysBetween(e.date, candidate.date));
+    if (days > FUZZY_DATE_WINDOW_DAYS) continue;
     const bothHaveIds = Boolean(candidate.providerTransactionId && e.providerTransactionId);
     // A pending transaction may be re-issued with a new id when it posts.
     if (bothHaveIds && !e.isPending) continue;
-    const score = merchantSimilarity(candidate.merchantName || candidate.description, e.merchantName || e.description);
-    if (score >= FUZZY_SIMILARITY_THRESHOLD && (!best || score > best.score)) best = { id: e.id, score };
+    // Sources name the same purchase differently (a CSV's "UBER CANADA/UBEREATS TORONTO" is
+    // "Uber Eats" from a provider), so the bank's own descriptions are compared too.
+    const score = Math.max(
+      merchantSimilarity(candidate.merchantName || candidate.description, e.merchantName || e.description),
+      descriptionSimilarity(candidate.description, e.description),
+    );
+    if (score < FUZZY_SIMILARITY_THRESHOLD) continue;
+    // Ties go to the closest date: two identical coffees on consecutive days match their own day.
+    if (!best || score > best.score || (score === best.score && days < best.days)) best = { id: e.id, score, days };
   }
   return best ? { kind: "fuzzy", existingId: best.id, score: best.score } : null;
+}
+
+/** Like merchantSimilarity, but descriptions that are only noise words ("POS PURCHASE") never match. */
+function descriptionSimilarity(a: string, b: string): number {
+  return normalizeMerchant(a) && normalizeMerchant(b) ? merchantSimilarity(a, b) : 0;
 }
 
 /** Removes duplicates inside one batch (e.g. an overlapping CSV export). Keeps the first occurrence. */

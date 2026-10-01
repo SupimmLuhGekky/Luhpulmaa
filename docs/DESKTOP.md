@@ -130,14 +130,17 @@ To restore a folder copy: quit Harbour, put the copied folder back at
 Restoring on a *different* Mac or user account works too, with one extra step: the keys in
 `secrets.enc` can only be unlocked by the keychain they were created with. Harbour will say
 it couldn't unlock its keys and offer **Create New Keys…**. Choose it: your accounts,
-budgets and transactions are kept; you sign in again, and bank connections (if you use a
-bank-data provider) need to be connected again.
+budgets and transactions are kept; you sign in again, and bank connections need to be
+connected again (for Lunch Flow, paste your API key again: the same accounts pick up where
+they left off).
 
 ## Optional settings: harbour.env
 
-Harbour runs without any configuration: CSV import, budgets, goals and everything else work
-out of the box, and the demo account is available. To connect a bank-data provider or turn
-on optional features, create a plain-text file named `harbour.env` in the data folder:
+Harbour runs without any configuration: CSV import, Lunch Flow connections (you paste your
+own Lunch Flow key in **Accounts → Add an account → Connect a bank**), budgets, goals and
+everything else work out of the box, and the demo account is available. To use a bank-data
+provider of your own (Plaid or Flinks) or turn on optional features, create a plain-text file
+named `harbour.env` in the data folder:
 
 ```sh
 # ~/Library/Application Support/Harbour/harbour.env
@@ -160,7 +163,9 @@ Then quit and reopen Harbour. Rules:
   its logs.
 
 Bank connections that need your bank's website to open in a pop-up may not work inside the
-desktop app yet; CSV import always does.
+desktop app yet; Lunch Flow (you sign in to your bank on Lunch Flow's website) and CSV import
+always do. Harbour refreshes connected accounts when it opens and every few hours while it's
+open; **Sync now** refreshes them right away.
 
 ## Troubleshooting
 

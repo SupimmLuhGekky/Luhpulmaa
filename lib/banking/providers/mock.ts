@@ -31,6 +31,7 @@ export class MockProvider implements FinancialDataProvider {
   readonly displayName = "Demo bank (simulated data)";
   readonly isSimulated = true;
   readonly reportsRemovals = false;
+  readonly reportsAccountTypes = true;
 
   constructor(private readonly clock: () => LocalDate = () => process.env.MOCK_TODAY || todayIn("America/Toronto")) {}
 

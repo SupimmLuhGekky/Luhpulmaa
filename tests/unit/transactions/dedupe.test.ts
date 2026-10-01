@@ -94,6 +94,29 @@ describe("findDuplicate", () => {
     expect(findDuplicate({ accountId: ACCOUNT, date: "2026-10-01", amountCents: -4000, description: "CAFE OLIMPICO" }, rows)).toMatchObject({ kind: "fuzzy", existingId: "t-strong", score: 1 });
   });
 
+  it("also compares the bank's own descriptions when sources name the merchant differently", () => {
+    // A CSV row (no merchant name) and the same purchase from a provider that names the merchant.
+    const csv = existing("t-csv", { date: "2026-09-29", amountCents: -2350, description: "UBER CANADA/UBEREATS TORONTO" });
+    const synced = { accountId: ACCOUNT, providerTransactionId: "lf-7", date: "2026-09-30", amountCents: -2350, description: "UBER CANADA/UBEREATS TORONTO ON", merchantName: "Uber Eats" };
+    expect(findDuplicate(synced, [csv])).toMatchObject({ kind: "fuzzy", existingId: "t-csv", score: 1 });
+  });
+
+  it("never matches on descriptions made only of noise words", () => {
+    const bank = existing("t-bank", { date: "2026-09-29", amountCents: -999, description: "POS PURCHASE", merchantName: "Metro" });
+    expect(findDuplicate({ accountId: ACCOUNT, date: "2026-09-30", amountCents: -999, description: "POS PURCHASE", merchantName: "Uber" }, [bank])).toBeNull();
+  });
+
+  it("gives a tie to the row closest in date", () => {
+    const rows = [
+      existing("t-two-days", { date: "2026-09-27", amountCents: -250, description: "TIM HORTONS" }),
+      existing("t-one-day", { date: "2026-09-30", amountCents: -250, description: "TIM HORTONS" }),
+    ];
+    expect(findDuplicate({ accountId: ACCOUNT, providerTransactionId: "lf-1", date: "2026-09-29", amountCents: -250, description: "TIM HORTONS" }, rows)).toMatchObject({
+      kind: "fuzzy",
+      existingId: "t-one-day",
+    });
+  });
+
   it("lets each existing row absorb at most one candidate", () => {
     const one = existing("t-one", { date: "2026-09-30", amountCents: -250, description: "TIM HORTONS" });
     const claimed = new Set<string>();

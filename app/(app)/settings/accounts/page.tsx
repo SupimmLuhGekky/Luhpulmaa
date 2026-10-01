@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, FileUp, Plus } from "lucide-react";
 import { requireOnboardedUser } from "@/lib/auth/guard";
 import { isEnabled } from "@/lib/flags";
-import { bankingStatus } from "@/lib/banking/registry";
+import { bankingStatus, lunchFlowAvailable } from "@/lib/banking/registry";
 import { listAccounts, listConnections } from "@/lib/accounts/service";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/shared/notice";
@@ -16,7 +16,15 @@ export default async function AccountsSettingsPage() {
   const user = await requireOnboardedUser();
   const [connections, accounts] = await Promise.all([listConnections(user.id), listAccounts(user.id, { includeHidden: true })]);
   const banking = bankingStatus();
+  const lunchFlow = lunchFlowAvailable();
   const csvImport = isEnabled("ENABLE_CSV_IMPORT");
+  const connectionsDescription = !banking.enabled
+    ? "Bank connections are turned off on this server."
+    : banking.configured && !banking.simulated
+      ? `Connect through ${banking.displayName}, or through your own Lunch Flow account.`
+      : banking.simulated
+        ? "Try a simulated demo bank, or connect your own Lunch Flow account."
+        : "Connect your bank through your own Lunch Flow account.";
   const manual = accounts.filter((a) => a.isManual);
   const hidden = accounts.filter((a) => a.isHidden).length;
   const rows: ConnectionRow[] = connections.map((c) => ({ ...c, status: c.status as ConnectionRow["status"] }));
@@ -37,7 +45,7 @@ export default async function AccountsSettingsPage() {
       <SettingsSection
         id="connections"
         title="Bank connections"
-        description={banking.enabled ? `Connections go through ${banking.displayName}.` : "Bank connections are turned off on this server."}
+        description={connectionsDescription}
         action={
           banking.enabled ? (
             <Button asChild size="sm">
@@ -52,9 +60,10 @@ export default async function AccountsSettingsPage() {
           {banking.enabled && banking.simulated ? (
             <Notice tone="info" title="Simulated bank data">
               This server uses a simulated demo bank. Its accounts and transactions are generated for testing and aren&apos;t real money.
+              {lunchFlow ? " A Lunch Flow connection uses your real accounts." : null}
             </Notice>
           ) : null}
-          {banking.enabled && !banking.configured ? (
+          {banking.enabled && !banking.configured && !lunchFlow ? (
             <Notice tone="warning" title="Bank connections aren't set up yet">
               You can still add accounts manually{csvImport ? " or import CSV files from your bank" : ""}.
             </Notice>

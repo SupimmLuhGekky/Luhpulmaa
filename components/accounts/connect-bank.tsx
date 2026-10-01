@@ -8,6 +8,7 @@ import { Notice } from "@/components/shared/notice";
 import { InstitutionIcon } from "./account-icon";
 import { possessive } from "./format";
 import { FlinksConnectDialog, LinkStatus, useBankLink, type BankLink } from "./bank-link";
+import { LunchFlowPanel } from "./lunch-flow";
 import type { BankingInfo, ConnectionView, MockInstitution } from "./types";
 
 export interface SimulatedInstitution extends MockInstitution {
@@ -20,12 +21,17 @@ export interface ConnectBankProps {
   /** Simulated institutions (demo mode only). */
   institutions: SimulatedInstitution[];
   csvEnabled: boolean;
+  /** The shared demo account, which can't connect real services. */
+  demo: boolean;
   onUseCsv: () => void;
   onUseManual: () => void;
 }
 
-/** "Connect a bank": the provider's hosted sign-in, or simulated banks in demo mode. */
-export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUseManual }: ConnectBankProps) {
+/**
+ * "Connect a bank": the server's provider (its hosted sign-in, or simulated banks in demo
+ * mode) and, beside it, the person's own Lunch Flow account.
+ */
+export function ConnectBank({ banking, institutions, csvEnabled, demo, onUseCsv, onUseManual }: ConnectBankProps) {
   const link = useBankLink();
   const fallback = (
     <div className="flex flex-col gap-2 sm:flex-row">
@@ -39,6 +45,21 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
       </Button>
     </div>
   );
+
+  const lunchFlow = banking.enabled && banking.lunchFlow ? <LunchFlowPanel demo={demo} /> : null;
+
+  if (lunchFlow && !banking.configured) {
+    // No provider keys on this server (the Mac app): Lunch Flow is the way to connect.
+    return (
+      <div className="space-y-5">
+        {lunchFlow}
+        <div className="space-y-2">
+          <p className="text-[13px] text-muted-foreground">Or bring accounts in without connecting anything:</p>
+          {fallback}
+        </div>
+      </div>
+    );
+  }
 
   if (!banking.enabled || !banking.configured) {
     return (
@@ -62,7 +83,14 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
     );
   }
 
-  if (banking.simulated) return <SimulatedBanks link={link} institutions={institutions} />;
+  if (banking.simulated) {
+    return (
+      <div className="space-y-6">
+        <SimulatedBanks link={link} institutions={institutions} />
+        {lunchFlow}
+      </div>
+    );
+  }
 
   const starting = link.phase.kind === "starting" && !link.phase.connectionId;
   const plaid = banking.provider === "PLAID";
@@ -81,7 +109,7 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
       </ul>
       {plaid ? (
         <Notice tone="info" title="Banking with Neo Financial?">
-          Neo doesn&apos;t connect through Plaid. Import a CSV export from Neo&apos;s web app instead.
+          Neo doesn&apos;t connect through Plaid. Try Lunch Flow below, or import a CSV export from Neo&apos;s website.
         </Notice>
       ) : null}
       <LinkStatus link={link} doneActions={<DoneActions onReset={link.reset} />} />
@@ -96,6 +124,7 @@ export function ConnectBank({ banking, institutions, csvEnabled, onUseCsv, onUse
         </div>
       ) : null}
       <FlinksConnectDialog link={link} />
+      {lunchFlow}
     </div>
   );
 }

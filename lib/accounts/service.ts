@@ -13,7 +13,7 @@ import { MOCK_INSTITUTIONS } from "@/lib/banking/providers/mock-data";
 import { isEnabled } from "@/lib/flags";
 import { syncConnection } from "@/lib/sync/service";
 import { recordNetWorthSnapshot } from "@/lib/networth/service";
-import { isLiability, manualAvailableBalance } from "./types";
+import { connectedAvailableBalance, isLiability, manualAvailableBalance, typeChosenByPerson } from "./types";
 import type { accountUpdateSchema, manualAccountSchema } from "./schemas";
 
 export { ACCOUNT_TYPES, accountUpdateSchema, manualAccountSchema } from "./schemas";
@@ -58,6 +58,8 @@ export interface AccountDTO {
   institution: { id: string; name: string; primaryColor: string | null } | null;
   connection: { id: string; status: string; provider: string; lastSyncError: string | null } | null;
   isSimulated: boolean;
+  /** The person sets the type and credit limit (manual accounts, and providers that don't report them). */
+  typeEditable: boolean;
 }
 
 type AccountRow = Awaited<ReturnType<typeof prisma.account.findFirstOrThrow<{ select: typeof accountSelect }>>>;
@@ -82,6 +84,7 @@ function toDTO(a: AccountRow): AccountDTO {
     institution: a.institution ? { id: a.institution.id, name: a.institution.name, primaryColor: a.institution.primaryColor } : null,
     connection: a.connection ? { id: a.connection.id, status: a.connection.status, provider: a.connection.provider, lastSyncError: a.connection.lastSyncError } : null,
     isSimulated: a.connection?.provider === "MOCK",
+    typeEditable: typeChosenByPerson({ isManual: a.isManual, provider: a.connection?.provider }),
   };
 }
 
@@ -175,27 +178,41 @@ async function userToday(userId: string) {
 }
 
 export async function updateAccount(userId: string, id: string, input: z.infer<typeof accountUpdateSchema>) {
-  const existing = await prisma.account.findFirst({ where: { id, userId } });
+  const existing = await prisma.account.findFirst({ where: { id, userId }, include: { connection: { select: { provider: true } } } });
   if (!existing) throw notFound("Account");
-  const bankOwned = input.balanceCents !== undefined || input.type !== undefined || input.creditLimitCents !== undefined;
-  if (bankOwned && !existing.isManual) {
+  const personTyped = typeChosenByPerson({ isManual: existing.isManual, provider: existing.connection?.provider });
+  if (input.balanceCents !== undefined && !existing.isManual) {
+    throw new AppError("FORBIDDEN", personTyped ? "This account's balance comes from your bank." : "Balances, types and credit limits of connected accounts come from your bank.");
+  }
+  if ((input.type !== undefined || input.creditLimitCents !== undefined) && !personTyped) {
     throw new AppError("FORBIDDEN", "Balances, types and credit limits of connected accounts come from your bank.");
   }
-  // Keep the stored available balance consistent with the (possibly new) type, balance and limit.
+  const balanceFields = input.balanceCents !== undefined || input.type !== undefined || input.creditLimitCents !== undefined;
   const type = input.type ?? existing.type;
-  const balance = input.balanceCents ?? toCents(existing.currentBalanceCents);
+  // A connected account's balance arrives signed from the holder's view, so moving it between
+  // an asset and a debt flips its sign (-$523 in a chequing account is $523 owed on a card).
+  const flips = !existing.isManual && input.type !== undefined && isLiability(input.type) !== isLiability(existing.type);
+  const current = toCents(existing.currentBalanceCents);
+  const balance = input.balanceCents ?? (flips ? -current || 0 : current);
+  // Keep the stored available balance consistent with the (possibly new) type, balance and limit.
   const limit = input.creditLimitCents !== undefined ? input.creditLimitCents : existing.creditLimitCents === null ? null : toCents(existing.creditLimitCents);
-  const account = await prisma.account.update({
-    where: { id },
-    data: {
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.isHidden !== undefined ? { isHidden: input.isHidden } : {}),
-      ...(input.includeInNetWorth !== undefined ? { includeInNetWorth: input.includeInNetWorth } : {}),
-      ...(input.balanceCents !== undefined ? { currentBalanceCents: input.balanceCents } : {}),
-      ...(input.type !== undefined ? { type: input.type } : {}),
-      ...(input.creditLimitCents !== undefined ? { creditLimitCents: input.creditLimitCents } : {}),
-      ...(bankOwned ? { availableBalanceCents: manualAvailableBalance(type, balance, limit) } : {}),
-    },
+  const account = await prisma.$transaction(async (tx) => {
+    const updated = await tx.account.update({
+      where: { id },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.isHidden !== undefined ? { isHidden: input.isHidden } : {}),
+        ...(input.includeInNetWorth !== undefined ? { includeInNetWorth: input.includeInNetWorth } : {}),
+        ...(input.balanceCents !== undefined || flips ? { currentBalanceCents: balance } : {}),
+        ...(input.type !== undefined ? { type: input.type } : {}),
+        ...(input.creditLimitCents !== undefined ? { creditLimitCents: input.creditLimitCents } : {}),
+        ...(balanceFields ? { availableBalanceCents: existing.isManual ? manualAvailableBalance(type, balance, limit) : connectedAvailableBalance(type, balance, limit) } : {}),
+      },
+    });
+    // Its balance history flips with it. (Past net-worth totals are unchanged: an asset of -$523 and a
+    // debt of $523 subtract the same amount.)
+    if (flips) await tx.$executeRaw`UPDATE "account_balance_snapshots" SET "balanceCents" = -"balanceCents" WHERE "accountId" = ${id}::uuid`;
+    return updated;
   });
   if (input.balanceCents !== undefined || input.type !== undefined || input.includeInNetWorth !== undefined) {
     const today = await userToday(userId);
