@@ -10,6 +10,7 @@ import { createMainWindow } from "./main-window.mjs";
 import { installMenu } from "./menu.mjs";
 import { MigrationError } from "./migrate.mjs";
 import { localGet, sleep } from "./net-utils.mjs";
+import { createPasswordResetFlow } from "./password-reset-flow.mjs";
 import { resolvePaths } from "./paths.mjs";
 import { PostgresError, bestEffort } from "./postgres.mjs";
 import { SecretsError } from "./secrets.mjs";
@@ -24,8 +25,9 @@ import { checkForUpdates } from "./updates.mjs";
  * Flags:
  *   --smoke-test=<file.png>  boot everything, wait for the sign-in page, check /api/health,
  *                            save a screenshot of the window and quit (exit 0 on success).
- *                            Also tries the demo sign-in (second screenshot) and the daily
- *                            jobs endpoint; those two are reported but never fail the test.
+ *                            Also tries the demo sign-in (second screenshot), the daily jobs
+ *                            endpoint and, on a brand-new data folder, the Reset Password…
+ *                            flow; those are reported but never fail the test.
  *   --data-dir=<dir>         use another data folder (testing)
  */
 
@@ -107,6 +109,11 @@ function run() {
   let bootPromise = null;
   /** @type {ReturnType<typeof scheduleDailyJobs> | null} */
   let dailyJobs = null;
+  /**
+   * What the shell needs to reach the running app (set once start-up has finished).
+   * @type {import("./password-reset-flow.mjs").RunningApp | null}
+   */
+  let running = null;
   /** @type {"no" | "pending" | "done"} */
   let quitting = "no";
   /** @type {Promise<{ databaseClean: boolean }> | null} */
@@ -182,10 +189,10 @@ function run() {
     openMainWindow();
   }
 
-  function openMainWindow() {
+  function openMainWindow(/** @type {string | undefined} */ url = undefined) {
     if (!baseUrl) return null;
     const win = createMainWindow({
-      url: `${baseUrl}${START_PATH}`,
+      url: url ?? `${baseUrl}${START_PATH}`,
       stateFile: paths.windowStateFile,
       onReadyToShow: () => {
         if (splash && !splash.isDestroyed()) splash.close();
@@ -203,11 +210,35 @@ function run() {
     return win;
   }
 
+  /** Shows a page of the app in the main window, opening the window if it was closed. */
+  async function showUrl(/** @type {string} */ url) {
+    const existing = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    if (!existing) {
+      // A new window shows itself once the page is ready.
+      const win = openMainWindow(url);
+      if (!win) throw new Error("Harbour isn’t ready yet.");
+      return win;
+    }
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    await existing.loadURL(url);
+    return existing;
+  }
+
+  const passwordReset = createPasswordResetFlow({
+    log,
+    runningApp: () => (quitting === "no" ? running : null),
+    showUrl,
+    parentWindow: () => mainWindow,
+  });
+
   app.whenReady().then(async () => {
     installMenu({
       dataDir: paths.dataDir,
       logsDir: paths.logsDir,
       onCheckForUpdates: () => void checkForUpdates({ currentVersion: app.getVersion(), manual: true, parent: mainWindow, log }),
+      onResetPassword: () => void passwordReset.run(),
     });
     app.setAboutPanelOptions({
       applicationName: APP_NAME,
@@ -235,11 +266,12 @@ function run() {
     log.info(`${APP_NAME} is ready at ${baseUrl}${result.firstLaunch ? " (first launch)" : ""}.`);
     if (components.server) components.server.onUnexpectedExit = (code) => void stoppedUnexpectedly(`The Harbour server stopped unexpectedly (code ${code}).`);
     if (components.postgres) components.postgres.onUnexpectedExit = (code) => void stoppedUnexpectedly(`The Harbour database stopped unexpectedly (code ${code}).`);
+    if (components.postgres) running = { baseUrl, dbPort: components.postgres.port, dbPassword: result.secrets.dbPassword };
     openMainWindow();
     dailyJobs = scheduleDailyJobs({ baseUrl, cronSecret: result.secrets.cronSecret, log });
 
     if (smoke) {
-      void smokeTest(/** @type {string} */ (flags.smokeTest));
+      void smokeTest(/** @type {string} */ (flags.smokeTest), result.firstLaunch);
     } else {
       setTimeout(() => void checkForUpdates({ currentVersion: app.getVersion(), manual: false, parent: mainWindow, log }), 5000);
     }
@@ -354,8 +386,11 @@ function run() {
     await exitWith(response === 0 ? 0 : 1);
   }
 
-  /** @param {string} screenshotPath */
-  async function smokeTest(screenshotPath) {
+  /**
+   * @param {string} screenshotPath
+   * @param {boolean} firstLaunch
+   */
+  async function smokeTest(screenshotPath, firstLaunch) {
     const watchdog = setTimeout(() => {
       say(`[smoke] FAILED: timed out after ${TIMEOUTS.smokeTestMs / 1000}s.`);
       void exitWith(1);
@@ -388,6 +423,15 @@ function run() {
       const cron = await Promise.race([dailyJobs?.runNow() ?? Promise.resolve("not scheduled"), sleep(120_000).then(() => "still running after 120s")]);
       log.info(`Smoke test: daily jobs ${cron}.`);
       say(`[smoke] daily jobs (/api/cron/daily): ${cron}`);
+      // Informational too: the Reset Password… menu path, end to end, with a throwaway account.
+      // Only on a brand-new data folder, so it never touches anyone's real accounts.
+      const reset = !firstLaunch
+        ? "skipped (runs only on a brand-new data folder)"
+        : running
+          ? await passwordReset.smokeCheck(running)
+          : "skipped (database not running)";
+      log.info(`Smoke test: password reset ${reset}.`);
+      say(`[smoke] password reset (menu flow): ${reset}`);
       clearTimeout(watchdog);
       const { databaseClean } = await shutdown();
       if (!databaseClean) throw new Error("the database did not shut down cleanly");
@@ -494,10 +538,13 @@ async function pageHeading(/** @type {import("electron").BrowserWindow} */ win) 
   return String(text).replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-/** Path and query of a URL, for logs. */
+/** Path and query of a URL, for logs, with token-like query values hidden. */
 function safePath(/** @type {string} */ url) {
   try {
     const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) {
+      if (/token|secret|password|code/i.test(key)) u.searchParams.set(key, "redacted");
+    }
     return `${u.pathname}${u.search}`;
   } catch {
     return "";
